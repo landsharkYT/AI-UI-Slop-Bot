@@ -1,0 +1,5 @@
+# Gate rules on precision, recall, yield, and user value
+
+Status: Accepted
+
+Each releasable rule will pass separate blind-holdout gates for at least 90% precision, 80% recall, 70% affected-component useful yield, and 80% Refactoring Brief actionability at the same default actionable operating point: unsuppressed, `moderate+`, high-confidence Findings from default-enabled rules. Holdouts contain at least 20 positive and 20 acceptable-counterexample cases per rule across independent repositories and design families. Template Convergence claims additionally require 10 positive and 10 counterexample blind cases per Page Archetype family. The Validated MVP also requires at least five of exactly seven external React maintainers to complete a realistic planning task and independently judge its reports accurate, actionable, and worth using, with fresh evidence for Full V1's expanded surface. Per-rule and per-archetype reporting prevents aggregate averages, correlated cases, noisy low-confidence output, or a nearly silent detector from concealing weak performance.
