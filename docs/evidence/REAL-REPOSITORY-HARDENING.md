@@ -28,3 +28,29 @@ The repeated dogfood pass reduced:
 The zero-Finding outcomes are not customer-validation labels. ReactPDFRedactor and WebsiteHelper remain incomplete because dynamic class expressions and unsupported conditional/compound CSS are visible coverage losses.
 
 The release build also completed the deterministic 500-file, 500,500-line benchmark in 148 ms with a 14,460 KiB peak RSS. The 20-pair progress trial measured a -0.48% median overhead for progress enabled versus disabled and passed the 2% median gate. These local measurements are regression evidence, not cross-machine performance guarantees.
+
+## Plain-CSS and graph follow-up
+
+Date: 2026-07-30
+
+A second read-only dogfood pass added EvacLogix from the adjacent `385/EvacLogix` repository. Fresh initialization correctly selected its `web` Vite application and excluded the `EvacLogixBuild` artifact directory.
+
+EvacLogix exposed a false negative in the first plain-CSS adapter: `.page-card` combined tokenized large-shadow and padding declarations with a gradient `::before` treatment across ten distinct component owners, but raw `var(...)` values and the pseudo-element were not composed into the base-class evidence. A controlled temporary-copy probe showed that directly exposing those same values produced the expected recurrence cluster.
+
+Rule pack `1.0.0-beta.2` now:
+
+- resolves unique global static plain-CSS custom properties across statically referenced stylesheets with recursion-depth, cycle, fallback, ambiguity, and expanded-value bounds;
+- composes only generated simple `.class::before` and `.class::after` signal declarations into the simple base class, while keeping stateful, descendant, compound, and conditional selectors unresolved;
+- probes relative module extensions without destroying dotted basenames such as `unity.types.ts`; and
+- excludes generated `_framework` runtime trees beneath `public` from the authored application module graph.
+
+The repeated pass produced:
+
+- ReactPDFRedactor: no Findings, three diagnostics, and 71/71 component-graph coverage;
+- OSM–GeoJSON to MarkdownMap: no Findings, five diagnostics, and 89/90 component-graph coverage after generated .NET runtime removal;
+- WebsiteHelper: no Findings, two diagnostics, and 58/58 component-graph coverage; and
+- EvacLogix: ten `repeated-decorative-shell` Findings at score 52 across ten owners, seven diagnostics, and 203/203 component-graph coverage.
+
+The remaining OSM graph miss is an authored worker runtime expression rather than generated framework noise. The original repositories were not modified; initialization and scans ran on disposable copies.
+
+After the follow-up changes, the deterministic 500-file, 500,500-line release benchmark completed in 147 ms with a 14,400 KiB peak RSS. The 20-pair progress trial measured a -0.04% median overhead and passed the 2% median gate.

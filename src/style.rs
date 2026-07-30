@@ -55,6 +55,7 @@ struct StyleAnalysis<'a> {
     resolved_configuration_values: u64,
     custom_variants: BTreeSet<String>,
     semantic_utilities: BTreeMap<String, BTreeSet<String>>,
+    plain_css_sources: Vec<(String, String)>,
 }
 
 impl<'a> StyleAnalysis<'a> {
@@ -73,6 +74,7 @@ impl<'a> StyleAnalysis<'a> {
             resolved_configuration_values: 0,
             custom_variants: BTreeSet::new(),
             semantic_utilities: BTreeMap::new(),
+            plain_css_sources: Vec::new(),
         }
     }
 
@@ -252,12 +254,6 @@ impl<'a> StyleAnalysis<'a> {
             self.configuration_bytes += bytes;
         }
         self.sources.insert(self.relative(&path));
-        if collect_plain_css_semantic_classes(&source, &mut self.semantic_utilities) {
-            self.unresolved.insert(format!(
-                "{}: signal-bearing conditional or compound plain CSS selectors remain unresolved",
-                self.relative(&path)
-            ));
-        }
         self.resolved_configuration_values += count_css_configuration_values(&source);
         collect_v4_semantic_utilities(&source, &mut self.semantic_utilities);
         self.custom_variants
@@ -325,6 +321,7 @@ impl<'a> StyleAnalysis<'a> {
             }
             self.visit_css(candidate, None, depth + 1)?;
         }
+        self.plain_css_sources.push((self.relative(&path), source));
         self.visiting_css.remove(&canonical);
         self.visited_css.insert(canonical);
         Ok(())
@@ -392,7 +389,25 @@ impl<'a> StyleAnalysis<'a> {
             .replace('\\', "/")
     }
 
-    fn finish(self) -> StyleInspection {
+    fn finish(mut self) -> StyleInspection {
+        let custom_properties = collect_plain_css_custom_properties(&self.plain_css_sources);
+        for (path, source) in &self.plain_css_sources {
+            let outcome = collect_plain_css_semantic_classes(
+                source,
+                &custom_properties,
+                &mut self.semantic_utilities,
+            );
+            if outcome.unresolved_selectors {
+                self.unresolved.insert(format!(
+                    "{path}: signal-bearing conditional or compound plain CSS selectors remain unresolved"
+                ));
+            }
+            if outcome.unresolved_variables {
+                self.unresolved.insert(format!(
+                    "{path}: unresolved, ambiguous, or cyclic plain CSS custom properties remain unresolved"
+                ));
+            }
+        }
         let semantic_utilities_resolved = self.semantic_utilities.len() as u64;
         StyleInspection {
             report: StyleAdapterReport {
@@ -488,13 +503,56 @@ fn collect_v4_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, 
     }
 }
 
+#[derive(Default)]
+struct PlainCssOutcome {
+    unresolved_selectors: bool,
+    unresolved_variables: bool,
+}
+
+fn collect_plain_css_custom_properties(
+    sources: &[(String, String)],
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut properties = BTreeMap::<String, BTreeSet<String>>::new();
+    for (_, source) in sources {
+        for (name, value) in global_plain_css_custom_properties(source) {
+            properties.entry(name).or_default().insert(value);
+        }
+    }
+    properties
+}
+
+fn global_plain_css_custom_properties(source: &str) -> Vec<(String, String)> {
+    let source = strip_css_comments(source);
+    let mut properties = Vec::new();
+    let mut index = 0;
+    while index < source.len() {
+        let Some(relative_open) = source[index..].find('{') else {
+            break;
+        };
+        let open = index + relative_open;
+        let Some(close) = matching_brace(&source, open) else {
+            break;
+        };
+        let header = source[index..open]
+            .rsplit_once(';')
+            .map_or(&source[index..open], |(_, selector)| selector)
+            .trim();
+        if matches!(header, ":root" | "html") || header.starts_with("@theme") {
+            properties.extend(css_custom_properties(&source[open + 1..close]));
+        }
+        index = close + 1;
+    }
+    properties
+}
+
 fn collect_plain_css_semantic_classes(
     source: &str,
+    custom_properties: &BTreeMap<String, BTreeSet<String>>,
     classes: &mut BTreeMap<String, BTreeSet<String>>,
-) -> bool {
+) -> PlainCssOutcome {
     let source = strip_css_comments(source);
     let mut index = 0;
-    let mut unresolved = false;
+    let mut outcome = PlainCssOutcome::default();
     while index < source.len() {
         let Some(relative_open) = source[index..].find('{') else {
             break;
@@ -508,37 +566,164 @@ fn collect_plain_css_semantic_classes(
             .map_or(&source[index..open], |(_, selector)| selector)
             .trim();
         let body = &source[open + 1..close];
-        let signals = classify_css_declarations(body);
+        let (signals, unresolved_variables) =
+            classify_plain_css_declarations(body, custom_properties);
+        outcome.unresolved_variables |= unresolved_variables;
         if header.starts_with('@') {
             let supported_tailwind_block =
                 header.starts_with("@theme") || header.starts_with("@utility");
             if !supported_tailwind_block && !signals.is_empty() {
-                unresolved = true;
+                outcome.unresolved_selectors = true;
             }
         } else if !signals.is_empty() {
             for selector in header.split(',').map(str::trim) {
-                if let Some(name) = simple_css_class_name(selector) {
-                    classes
-                        .entry(name.to_owned())
-                        .or_default()
-                        .extend(signals.clone());
+                if let Some((name, pseudo_element)) = simple_css_class_name(selector) {
+                    if !pseudo_element || generated_pseudo_element(body) {
+                        classes
+                            .entry(name.to_owned())
+                            .or_default()
+                            .extend(signals.clone());
+                    }
                 } else if selector.contains('.') {
-                    unresolved = true;
+                    outcome.unresolved_selectors = true;
                 }
             }
         }
         index = close + 1;
     }
-    unresolved
+    outcome
 }
 
-fn simple_css_class_name(selector: &str) -> Option<&str> {
-    let name = selector.strip_prefix('.')?;
+fn classify_plain_css_declarations(
+    body: &str,
+    custom_properties: &BTreeMap<String, BTreeSet<String>>,
+) -> (BTreeSet<String>, bool) {
+    let mut signals = BTreeSet::new();
+    let mut unresolved_variables = false;
+    for declaration in body.split(';') {
+        let Some((property, raw_value)) = declaration.split_once(':') else {
+            continue;
+        };
+        let property = property.trim();
+        let classifier = match property {
+            "border-radius" => classify_radius as fn(&str) -> Option<&'static str>,
+            "box-shadow" => classify_shadow,
+            "background" | "background-image" => classify_gradient,
+            "padding" => classify_spacing,
+            _ => continue,
+        };
+        let value = if raw_value.contains("var(") {
+            match resolve_plain_css_value(raw_value, custom_properties, &mut BTreeSet::new(), 0) {
+                Some(value) => value,
+                None => {
+                    unresolved_variables = true;
+                    continue;
+                }
+            }
+        } else {
+            raw_value.to_owned()
+        };
+        if let Some(signal) = classifier(&value) {
+            signals.insert(signal.to_owned());
+        }
+    }
+    (signals, unresolved_variables)
+}
+
+fn resolve_plain_css_value(
+    value: &str,
+    custom_properties: &BTreeMap<String, BTreeSet<String>>,
+    resolving: &mut BTreeSet<String>,
+    depth: usize,
+) -> Option<String> {
+    const MAX_CUSTOM_PROPERTY_DEPTH: usize = 16;
+    const MAX_EXPANDED_VALUE_BYTES: usize = 4096;
+
+    if depth > MAX_CUSTOM_PROPERTY_DEPTH || value.len() > MAX_EXPANDED_VALUE_BYTES {
+        return None;
+    }
+    let mut resolved = value.to_owned();
+    while let Some(start) = resolved.find("var(") {
+        let open = start + "var".len();
+        let close = matching_parenthesis(&resolved, open)?;
+        let inner = resolved[open + 1..close].trim();
+        let (name, fallback) = inner
+            .split_once(',')
+            .map_or((inner, None), |(name, fallback)| {
+                (name.trim(), Some(fallback.trim()))
+            });
+        if !name.starts_with("--")
+            || !name[2..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return None;
+        }
+        let replacement = match custom_properties.get(&name[2..]) {
+            Some(values) if values.len() > 1 => return None,
+            Some(values) if resolving.insert(name.to_owned()) => {
+                let candidate = values.iter().next()?;
+                let expanded =
+                    resolve_plain_css_value(candidate, custom_properties, resolving, depth + 1);
+                resolving.remove(name);
+                match expanded {
+                    Some(expanded) => expanded,
+                    None => {
+                        resolve_plain_css_value(fallback?, custom_properties, resolving, depth + 1)?
+                    }
+                }
+            }
+            Some(_) | None => {
+                resolve_plain_css_value(fallback?, custom_properties, resolving, depth + 1)?
+            }
+        };
+        resolved.replace_range(start..=close, &replacement);
+        if resolved.len() > MAX_EXPANDED_VALUE_BYTES {
+            return None;
+        }
+    }
+    Some(resolved)
+}
+
+fn matching_parenthesis(source: &str, open: usize) -> Option<usize> {
+    let mut depth = 0_u32;
+    for (offset, character) in source[open..].char_indices() {
+        if character == '(' {
+            depth += 1;
+        } else if character == ')' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Some(open + offset);
+            }
+        }
+    }
+    None
+}
+
+fn simple_css_class_name(selector: &str) -> Option<(&str, bool)> {
+    let without_pseudo_element = selector
+        .strip_suffix("::before")
+        .or_else(|| selector.strip_suffix("::after"))
+        .unwrap_or(selector);
+    let pseudo_element = without_pseudo_element.len() != selector.len();
+    let name = without_pseudo_element.strip_prefix('.')?;
     (!name.is_empty()
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
-    .then_some(name)
+    .then_some((name, pseudo_element))
+}
+
+fn generated_pseudo_element(body: &str) -> bool {
+    body.split(';').any(|declaration| {
+        declaration
+            .split_once(':')
+            .is_some_and(|(property, value)| {
+                property.trim() == "content"
+                    && !matches!(value.trim(), "" | "none" | "normal" | "var()")
+                    && !value.trim().starts_with("var(")
+            })
+    })
 }
 
 fn strip_css_comments(source: &str) -> String {

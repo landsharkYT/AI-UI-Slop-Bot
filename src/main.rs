@@ -9,9 +9,9 @@ use std::{
 
 use ai_ui_slop::{
     BaselineArtifact, BaselineMigrationPreview, CancellationToken, ProgressEvent,
-    RepositoryRequest, accept_candidate, analyze_repository, analyze_repository_with_progress,
-    compare_baseline, create_candidate, page_archetype_catalog, policy, preview_baseline_migration,
-    render_refactoring_brief, rule_catalog,
+    RULE_PACK_VERSION, RepositoryRequest, accept_candidate, analyze_repository,
+    analyze_repository_with_progress, compare_baseline, create_candidate, page_archetype_catalog,
+    policy, preview_baseline_migration, render_refactoring_brief, rule_catalog,
 };
 use serde_json::{Value, json};
 
@@ -798,8 +798,9 @@ fn run_schema(arguments: &[String]) -> Result<(), (u8, String)> {
 
 fn run_version() -> Result<(), (u8, String)> {
     println!(
-        "ai-ui-slop {}\nreport-schema 6\nconfig-schema 1\nbaseline-schema 2\nrule-pack 1.0.0-beta.1\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
-        env!("CARGO_PKG_VERSION")
+        "ai-ui-slop {}\nreport-schema 6\nconfig-schema 1\nbaseline-schema 2\nrule-pack {}\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
+        env!("CARGO_PKG_VERSION"),
+        RULE_PACK_VERSION
     );
     Ok(())
 }

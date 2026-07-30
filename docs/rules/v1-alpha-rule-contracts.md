@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Rule-pack version | `1.0.0-beta.1` |
+| Rule-pack version | `1.0.0-beta.2` |
 | Status | Accepted for Shot 1 breadth implementation |
 | Calibration status | Pending; not release-approved |
-| Last updated | 2026-07-29 |
+| Last updated | 2026-07-30 |
 
 These contracts authorize conservative V1-shaped matchers for Shot 1. They make the calculation and evidence shapes executable across the full rule pack without claiming customer validation. A matcher must emit explicit coverage loss instead of guessing when its required evidence is unavailable. Threshold changes require a rule-pack version change and fixture updates.
 
@@ -16,7 +16,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 - The actionable owner is the nearest supported named React function or arrow-function component.
 - The reachable-state family is `default`; unresolved runtime branches never contribute co-occurring signals.
 - One rule, owner, semantic occurrence key, and state family aggregate into one Finding.
-- Literal Tailwind classes and static inline-style values are high-confidence evidence. Unsupported composition is a coverage diagnostic and does not contribute.
+- Literal Tailwind classes, static inline-style values, and bounded statically referenced plain-CSS values are high-confidence evidence. Plain-CSS custom properties contribute only when global definitions resolve uniquely within bounded recursion and output limits; generated simple `::before` and `::after` decoration composes with its base class. Scoped, unsupported, or ambiguous composition is a coverage diagnostic and does not contribute.
 - House Style approval neutralizes only the matched signal contribution. An approved primitive suppresses Findings owned by that exact normalized module/export pair. A narrow Suppression applies only to its exact rule, path, and owner.
 - Findings are advisory unless effective policy gives them an `enforce` disposition.
 - Scores use the global bands `minimal` 0–19, `low` 20–39, `moderate` 40–59, `high` 60–79, and `dominant` 80–100.

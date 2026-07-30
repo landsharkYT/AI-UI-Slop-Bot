@@ -174,6 +174,112 @@ export function Gamma(){return <aside className="product-shell"><h2>Gamma</h2></
 }
 
 #[test]
+fn imported_plain_css_resolves_static_custom_properties_across_stylesheets() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    fs::write(
+        repository.path().join("tokens.css"),
+        r#"
+:root {
+  --radius-shell: 2rem;
+  --shadow-shell: 0 24px 48px rgba(0, 0, 0, 0.2);
+  --padding-shell: 2.5rem;
+  --background-shell: linear-gradient(135deg, #fff, #eef);
+}
+"#,
+    )
+    .expect("tokens");
+    fs::write(
+        repository.path().join("styles.css"),
+        r#"
+.product-shell {
+  border-radius: var(--radius-shell);
+  box-shadow: var(--shadow-shell);
+  padding: var(--padding-shell);
+  background: var(--background-shell);
+}
+"#,
+    )
+    .expect("stylesheet");
+    fs::write(
+        repository.path().join("App.tsx"),
+        r#"
+import "./tokens.css";
+import "./styles.css";
+export function Alpha(){return <section className="product-shell"><h2>Alpha</h2></section>}
+export function Beta(){return <article className="product-shell"><h2>Beta</h2></article>}
+export function Gamma(){return <aside className="product-shell"><h2>Gamma</h2></aside>}
+"#,
+    )
+    .expect("source");
+
+    let report =
+        analyze_repository(RepositoryRequest::new(repository.path())).expect("canonical report");
+    let scope = &report.scopes[0];
+    let shells = scope
+        .findings
+        .iter()
+        .filter(|finding| finding.rule_id == "repeated-decorative-shell")
+        .collect::<Vec<_>>();
+
+    assert_eq!(shells.len(), 3, "{:#?}", scope.findings);
+    assert!(shells.iter().all(|finding| {
+        finding.signature
+            == [
+                "extreme-radius",
+                "generous-padding",
+                "gradient-surface",
+                "large-shadow",
+            ]
+    }));
+}
+
+#[test]
+fn simple_pseudo_element_decoration_composes_with_its_base_css_class() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    fs::write(
+        repository.path().join("styles.css"),
+        r#"
+.page-card {
+  padding: 2rem;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.2);
+}
+.page-card::before {
+  content: "";
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), transparent 40%);
+}
+"#,
+    )
+    .expect("stylesheet");
+    fs::write(
+        repository.path().join("App.tsx"),
+        r#"
+import "./styles.css";
+export function Alpha(){return <section className="page-card"><h2>Alpha</h2></section>}
+export function Beta(){return <article className="page-card"><h2>Beta</h2></article>}
+export function Gamma(){return <aside className="page-card"><h2>Gamma</h2></aside>}
+"#,
+    )
+    .expect("source");
+
+    let report =
+        analyze_repository(RepositoryRequest::new(repository.path())).expect("canonical report");
+    let scope = &report.scopes[0];
+    let shells = scope
+        .findings
+        .iter()
+        .filter(|finding| finding.rule_id == "repeated-decorative-shell")
+        .collect::<Vec<_>>();
+
+    assert_eq!(shells.len(), 3, "{:#?}", scope.findings);
+    assert!(shells.iter().all(|finding| {
+        finding.signature == ["generous-padding", "gradient-surface", "large-shadow"]
+    }));
+    assert!(scope.diagnostics.iter().all(|diagnostic| {
+        diagnostic.reason != "style-adapter-unresolved" || !diagnostic.detail.contains("styles.css")
+    }));
+}
+
+#[test]
 fn unreferenced_plain_css_does_not_create_findings() {
     let repository = tempfile::tempdir().expect("temporary repository");
     fs::write(

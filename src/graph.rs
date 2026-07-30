@@ -453,7 +453,22 @@ fn resolve_module_candidate(base_directory: &Path, specifier: &str) -> Option<Pa
     let base = base_directory.join(specifier);
     let mut candidates = vec![base.clone()];
     for extension in ["tsx", "jsx", "ts", "js", "mts", "cts", "mjs", "cjs"] {
-        candidates.push(base.with_extension(extension));
+        let mut appended = base.as_os_str().to_os_string();
+        appended.push(".");
+        appended.push(extension);
+        candidates.push(PathBuf::from(appended));
+        if base
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                matches!(
+                    value,
+                    "tsx" | "jsx" | "ts" | "js" | "mts" | "cts" | "mjs" | "cjs"
+                )
+            })
+        {
+            candidates.push(base.with_extension(extension));
+        }
         candidates.push(base.join(format!("index.{extension}")));
     }
     candidates
@@ -725,7 +740,8 @@ fn discover_sources(root: &Path, ignore_policy_root: &Path) -> Result<Vec<PathBu
                                 | "coverage"
                                 | ".next"
                         )
-                    });
+                    })
+                    || generated_public_framework_directory(&relative);
                 if !ignored {
                     visit(root, &path, ignore_rules, files)?;
                 }
@@ -745,6 +761,12 @@ fn discover_sources(root: &Path, ignore_policy_root: &Path) -> Result<Vec<PathBu
     visit(root, root, &ignore_rules, &mut files)?;
     files.sort();
     Ok(files)
+}
+
+fn generated_public_framework_directory(relative: &str) -> bool {
+    let components = relative.split('/').collect::<Vec<_>>();
+    components.last() == Some(&"_framework")
+        && components[..components.len().saturating_sub(1)].contains(&"public")
 }
 
 fn normalize_path(root: &Path, path: &Path) -> String {

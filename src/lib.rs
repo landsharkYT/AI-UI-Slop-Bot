@@ -10,8 +10,8 @@ mod style;
 
 pub use app::{
     ArchetypeMatch, CanonicalReport, ComponentProfile, CoverageDimension, CoverageVector,
-    FindingImpact, ReportSummary, RepositoryError, RepositoryProfile, RepositoryRequest,
-    RouteClassification, ScopeDiagnostic, ScopeReport, analyze_repository,
+    FindingImpact, RULE_PACK_VERSION, ReportSummary, RepositoryError, RepositoryProfile,
+    RepositoryRequest, RouteClassification, ScopeDiagnostic, ScopeReport, analyze_repository,
     analyze_repository_with_progress, render_refactoring_brief,
 };
 pub use baseline::{
