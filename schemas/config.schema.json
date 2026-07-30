@@ -50,6 +50,20 @@
         "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
       }
     },
+    "componentWrappers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+      }
+    },
+    "jsxExtensions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["js", "jsx", "ts", "tsx"] }
+    },
     "tailwindVersion": { "enum": ["auto", "3", "4"] },
     "resources": {
       "type": "object",

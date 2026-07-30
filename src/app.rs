@@ -18,7 +18,7 @@ use crate::{
     style::{StyleAdapterReport, StyleRequest, inspect as inspect_style},
 };
 
-pub const REPORT_SCHEMA_VERSION: &str = "4";
+pub const REPORT_SCHEMA_VERSION: &str = "5";
 pub const RULE_PACK_VERSION: &str = "1.0.0-beta.1";
 
 #[derive(Debug, Clone)]
@@ -107,6 +107,7 @@ pub struct ScopeReport {
     pub style_adapter: StyleAdapterReport,
     pub component_profiles: Vec<ComponentProfile>,
     pub findings: Vec<Finding>,
+    pub finding_impacts: Vec<FindingImpact>,
     pub repository_profile: RepositoryProfile,
     pub diagnostics: Vec<ScopeDiagnostic>,
 }
@@ -156,6 +157,13 @@ pub struct ComponentProfile {
     pub score: u8,
     pub band: String,
     pub finding_fingerprints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingImpact {
+    pub finding_fingerprint: String,
+    pub usage_sites: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -409,6 +417,8 @@ fn analyze_scope(
             .map(|(rule_id, policy)| (rule_id.clone(), policy.minimum_confidence.clone()))
             .collect(),
         class_functions: effective.class_functions.iter().cloned().collect(),
+        component_wrappers: effective.component_wrappers.iter().cloned().collect(),
+        jsx_extensions: effective.jsx_extensions.iter().cloned().collect(),
         max_files: effective.resources.max_files,
         max_source_bytes: effective.resources.max_source_bytes,
         max_file_bytes: effective.resources.max_file_bytes,
@@ -477,7 +487,7 @@ fn analyze_scope(
         .iter()
         .map(|primitive| (primitive.path.clone(), primitive.owner.clone()))
         .collect::<Vec<_>>();
-    let graph_analysis = build_repository_graph(GraphRequest {
+    let mut graph_analysis = build_repository_graph(GraphRequest {
         root: &effective.absolute_root,
         ignore_policy_root,
         owners: &scan_report.owners,
@@ -486,6 +496,21 @@ fn analyze_scope(
         max_edges: effective.resources.max_graph_edges,
     })
     .map_err(RepositoryError::new)?;
+    let ownership_losses = scan_report
+        .coverage
+        .unresolved
+        .iter()
+        .filter(|issue| {
+            matches!(
+                issue.reason.as_str(),
+                "opaque-component-wrapper" | "decorated-component" | "unsupported-inheritance"
+            )
+        })
+        .count() as u64;
+    graph_analysis.candidate_edges = graph_analysis
+        .candidate_edges
+        .saturating_add(ownership_losses);
+    let finding_impacts = finding_impacts(&scan_report.findings, &graph_analysis.graph);
     let component_profiles = aggregate_components(&scan_report.findings, &scan_report.owners);
     let repository_profile = aggregate_repository(&component_profiles, &scan_report.findings);
     let unresolved = scan_report.coverage.unresolved.len() as u64;
@@ -599,9 +624,39 @@ fn analyze_scope(
         style_adapter,
         component_profiles,
         findings: scan_report.findings,
+        finding_impacts,
         repository_profile,
         diagnostics,
     })
+}
+
+fn finding_impacts(findings: &[Finding], graph: &RepositoryGraph) -> Vec<FindingImpact> {
+    let mut uses_by_component = BTreeMap::<String, Vec<String>>::new();
+    for edge in &graph.edges {
+        if edge.kind != "renders" || !edge.resolved {
+            continue;
+        }
+        let Some(path) = edge.from.strip_prefix("file:") else {
+            continue;
+        };
+        uses_by_component
+            .entry(edge.to.clone())
+            .or_default()
+            .push(path.to_owned());
+    }
+    findings
+        .iter()
+        .filter_map(|finding| {
+            let component = format!("component:{}#{}", finding.path, finding.owner);
+            let mut usage_sites = uses_by_component.get(&component)?.clone();
+            usage_sites.sort();
+            usage_sites.dedup();
+            Some(FindingImpact {
+                finding_fingerprint: finding.fingerprint.clone(),
+                usage_sites,
+            })
+        })
+        .collect()
 }
 
 #[must_use]
@@ -646,6 +701,21 @@ pub fn render_refactoring_brief(report: &CanonicalReport) -> String {
                         finding.band,
                         escape_markdown(&finding.remediation)
                     ));
+                    if let Some(impact) = scope
+                        .finding_impacts
+                        .iter()
+                        .find(|impact| impact.finding_fingerprint == finding.fingerprint)
+                    {
+                        output.push_str(&format!(
+                            "     - Impact evidence: {}\n",
+                            impact
+                                .usage_sites
+                                .iter()
+                                .map(|path| format!("`{}`", escape_inline_code(path)))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
                 }
             }
             output.push('\n');

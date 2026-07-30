@@ -35,7 +35,7 @@ fn explicit_tailwind_version_and_recursive_css_sources_are_canonical() {
         .expect("repository analysis succeeds");
     let adapter = &report.scopes[0].style_adapter;
 
-    assert_eq!(report.schema_version, "4");
+    assert_eq!(report.schema_version, "5");
     assert_eq!(adapter.tailwind_version.as_deref(), Some("4"));
     assert_eq!(adapter.detection_source.as_deref(), Some("configured"));
     assert_eq!(adapter.configuration_import_edges, 2);

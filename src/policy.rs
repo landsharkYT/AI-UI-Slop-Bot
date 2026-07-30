@@ -21,6 +21,8 @@ pub struct ProjectConfig {
     pub rules: BTreeMap<String, RulePolicy>,
     pub custom_archetypes: Vec<CustomArchetype>,
     pub class_functions: Vec<String>,
+    pub component_wrappers: Vec<String>,
+    pub jsx_extensions: Vec<String>,
     pub tailwind_version: String,
     pub resources: ResourcePolicy,
 }
@@ -42,6 +44,8 @@ impl Default for ProjectConfig {
                 "cn".to_owned(),
                 "twMerge".to_owned(),
             ],
+            component_wrappers: vec!["memo".to_owned(), "forwardRef".to_owned()],
+            jsx_extensions: vec!["jsx".to_owned(), "tsx".to_owned()],
             tailwind_version: "auto".to_owned(),
             resources: ResourcePolicy::default(),
         }
@@ -227,6 +231,8 @@ pub struct EffectiveScope {
     pub rules: BTreeMap<String, RulePolicy>,
     pub custom_archetypes: Vec<CustomArchetype>,
     pub class_functions: Vec<String>,
+    pub component_wrappers: Vec<String>,
+    pub jsx_extensions: Vec<String>,
     pub tailwind_version: String,
     pub route_overrides: Vec<RouteOverride>,
     pub resources: ResourcePolicy,
@@ -299,6 +305,25 @@ fn validate_config(config: &ProjectConfig) -> Result<(), String> {
         })
     {
         return Err("classFunctions must contain valid JavaScript identifiers".to_owned());
+    }
+    if config.component_wrappers.is_empty()
+        || config.component_wrappers.iter().any(|wrapper| {
+            wrapper.is_empty()
+                || !wrapper.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+                })
+        })
+    {
+        return Err("componentWrappers must contain valid JavaScript identifiers".to_owned());
+    }
+    let supported_extensions = ["js", "jsx", "ts", "tsx"];
+    if config.jsx_extensions.is_empty()
+        || config
+            .jsx_extensions
+            .iter()
+            .any(|extension| !supported_extensions.contains(&extension.as_str()))
+    {
+        return Err("jsxExtensions must contain js, jsx, ts, or tsx".to_owned());
     }
     for (rule_id, policy) in &config.rules {
         if !known_rules.contains(rule_id.as_str()) {
@@ -500,6 +525,8 @@ pub fn resolve_scopes(
             &config.rules,
             &config.custom_archetypes,
             &config.class_functions,
+            &config.component_wrappers,
+            &config.jsx_extensions,
             &config.tailwind_version,
             &config.resources,
             config.mode,
@@ -515,6 +542,8 @@ pub fn resolve_scopes(
             rules: config.rules.clone(),
             custom_archetypes: config.custom_archetypes.clone(),
             class_functions: config.class_functions.clone(),
+            component_wrappers: config.component_wrappers.clone(),
+            jsx_extensions: config.jsx_extensions.clone(),
             tailwind_version: config.tailwind_version.clone(),
             route_overrides: scope.routes.clone(),
             resources: config.resources.clone(),

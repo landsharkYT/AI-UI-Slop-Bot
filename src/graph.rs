@@ -397,6 +397,7 @@ fn resolve_module_candidate(base_directory: &Path, specifier: &str) -> Option<Pa
 struct ModuleResolution {
     base_url: PathBuf,
     paths: Vec<(String, Vec<String>)>,
+    workspace_exports: BTreeMap<String, PathBuf>,
 }
 
 impl ModuleResolution {
@@ -406,13 +407,12 @@ impl ModuleResolution {
             .map(|name| root.join(name))
             .find(|path| path.is_file())
         else {
-            return Ok(Self::default());
+            return Ok(Self {
+                workspace_exports: load_workspace_exports(root)?,
+                ..Self::default()
+            });
         };
-        let source = fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-        let source = crate::policy::strip_jsonc(&source)?;
-        let value: serde_json::Value = serde_json::from_str(&source)
-            .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+        let value = load_tsconfig(&path, &mut BTreeSet::new())?;
         let compiler = value
             .get("compilerOptions")
             .and_then(serde_json::Value::as_object);
@@ -439,10 +439,17 @@ impl ModuleResolution {
             })
             .collect::<Vec<_>>();
         paths.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(Self { base_url, paths })
+        Ok(Self {
+            base_url,
+            paths,
+            workspace_exports: load_workspace_exports(root)?,
+        })
     }
 
     fn resolve(&self, root: &Path, specifier: &str) -> Option<PathBuf> {
+        if let Some(target) = self.workspace_exports.get(specifier) {
+            return target.canonicalize().ok();
+        }
         for (pattern, targets) in &self.paths {
             let wildcard = match pattern.split_once('*') {
                 Some((prefix, suffix))
@@ -467,6 +474,149 @@ impl ModuleResolution {
             }
         }
         None
+    }
+}
+
+fn load_tsconfig(
+    path: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<serde_json::Value, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
+    if !visited.insert(canonical.clone()) {
+        return Err(format!("cyclic tsconfig extends at {}", path.display()));
+    }
+    let source = fs::read_to_string(&canonical)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let source = crate::policy::strip_jsonc(&source)?;
+    let value: serde_json::Value = serde_json::from_str(&source)
+        .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+    let Some(extends) = value
+        .get("extends")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    else {
+        return Ok(value);
+    };
+    let mut parent_path = canonical.parent().unwrap_or(Path::new(".")).join(extends);
+    if parent_path.extension().is_none() {
+        parent_path.set_extension("json");
+    }
+    let mut parent = load_tsconfig(&parent_path, visited)?;
+    let parent_compiler = parent
+        .get("compilerOptions")
+        .and_then(serde_json::Value::as_object)
+        .cloned();
+    let child_compiler = value
+        .get("compilerOptions")
+        .and_then(serde_json::Value::as_object);
+    if let Some(child) = child_compiler {
+        let mut merged = parent_compiler.unwrap_or_default();
+        for (key, value) in child {
+            merged.insert(key.clone(), value.clone());
+        }
+        parent["compilerOptions"] = serde_json::Value::Object(merged);
+    }
+    Ok(parent)
+}
+
+fn load_workspace_exports(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+    let root_package = root.join("package.json");
+    let Ok(source) = fs::read_to_string(&root_package) else {
+        return Ok(BTreeMap::new());
+    };
+    let value: serde_json::Value = serde_json::from_str(&source)
+        .map_err(|error| format!("invalid {}: {error}", root_package.display()))?;
+    let patterns = value
+        .get("workspaces")
+        .and_then(|workspaces| {
+            workspaces.as_array().or_else(|| {
+                workspaces
+                    .get("packages")
+                    .and_then(serde_json::Value::as_array)
+            })
+        })
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    let mut exports = BTreeMap::new();
+    for pattern in patterns {
+        let (parent, wildcard) = pattern
+            .split_once('*')
+            .map_or((pattern.trim_end_matches('/'), false), |(prefix, _)| {
+                (prefix.trim_end_matches('/'), true)
+            });
+        let directory = root.join(parent);
+        let candidates = if wildcard {
+            match fs::read_dir(&directory) {
+                Ok(entries) => entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir())
+                    .collect::<Vec<_>>(),
+                Err(_) => Vec::new(),
+            }
+        } else {
+            vec![directory]
+        };
+        for package_root in candidates {
+            let package_path = package_root.join("package.json");
+            let Ok(package_source) = fs::read_to_string(&package_path) else {
+                continue;
+            };
+            let package: serde_json::Value = serde_json::from_str(&package_source)
+                .map_err(|error| format!("invalid {}: {error}", package_path.display()))?;
+            let Some(name) = package.get("name").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if let Some(package_exports) = package.get("exports") {
+                collect_package_exports(name, &package_root, package_exports, &mut exports);
+            } else if let Some(entry) = package
+                .get("module")
+                .or_else(|| package.get("main"))
+                .and_then(serde_json::Value::as_str)
+                .and_then(|target| resolve_module_candidate(&package_root, target))
+            {
+                exports.insert(name.to_owned(), entry);
+            }
+        }
+    }
+    Ok(exports)
+}
+
+fn collect_package_exports(
+    package_name: &str,
+    package_root: &Path,
+    value: &serde_json::Value,
+    exports: &mut BTreeMap<String, PathBuf>,
+) {
+    if let Some(target) = value.as_str() {
+        if let Some(resolved) = resolve_module_candidate(package_root, target) {
+            exports.insert(package_name.to_owned(), resolved);
+        }
+        return;
+    }
+    let Some(entries) = value.as_object() else {
+        return;
+    };
+    for (subpath, target) in entries {
+        let Some(target) = target
+            .as_str()
+            .or_else(|| target.get("import").and_then(serde_json::Value::as_str))
+            .or_else(|| target.get("default").and_then(serde_json::Value::as_str))
+        else {
+            continue;
+        };
+        let specifier = if subpath == "." {
+            package_name.to_owned()
+        } else {
+            format!("{package_name}/{}", subpath.trim_start_matches("./"))
+        };
+        if let Some(resolved) = resolve_module_candidate(package_root, target) {
+            exports.insert(specifier, resolved);
+        }
     }
 }
 

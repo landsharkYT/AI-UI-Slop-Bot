@@ -256,6 +256,8 @@ fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
   "rules": {{}},
   "customArchetypes": [],
   "classFunctions": ["clsx", "classnames", "classNames", "cn", "twMerge"],
+  "componentWrappers": ["memo", "forwardRef"],
+  "jsxExtensions": ["jsx", "tsx"],
   "tailwindVersion": "auto",
   "resources": {{
     "maxFiles": 20000,
@@ -441,6 +443,8 @@ fn run_config(arguments: &[String]) -> Result<(), (u8, String)> {
                 "customArchetypes": scope.custom_archetypes,
                 "suppressions": scope.suppressions,
                 "classFunctions": scope.class_functions,
+                "componentWrappers": scope.component_wrappers,
+                "jsxExtensions": scope.jsx_extensions,
                 "tailwindVersion": scope.tailwind_version,
                 "resources": scope.resources,
                 "provenance": {
@@ -449,6 +453,8 @@ fn run_config(arguments: &[String]) -> Result<(), (u8, String)> {
                     "rules": "built-in + repository-root",
                     "suppressions": "repository-root",
                     "classFunctions": "repository-root",
+                    "componentWrappers": "repository-root",
+                    "jsxExtensions": "repository-root",
                     "tailwindVersion": "repository-root",
                     "resources": "repository-root"
                 }

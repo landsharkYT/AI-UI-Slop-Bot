@@ -9,9 +9,9 @@ mod style;
 
 pub use app::{
     ArchetypeMatch, CanonicalReport, ComponentProfile, CoverageDimension, CoverageVector,
-    ReportSummary, RepositoryError, RepositoryProfile, RepositoryRequest, RouteClassification,
-    ScopeDiagnostic, ScopeReport, analyze_repository, analyze_repository_with_progress,
-    render_refactoring_brief,
+    FindingImpact, ReportSummary, RepositoryError, RepositoryProfile, RepositoryRequest,
+    RouteClassification, ScopeDiagnostic, ScopeReport, analyze_repository,
+    analyze_repository_with_progress, render_refactoring_brief,
 };
 pub use baseline::{
     BASELINE_SCHEMA_VERSION, BaselineArtifact, BaselineChange, BaselineComparison, BaselineFinding,
@@ -34,13 +34,15 @@ use std::{
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    CallExpression, Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXChild,
+    CallExpression, Class, Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXChild,
     JSXElement, JSXExpression, ObjectExpression, ObjectPropertyKind, TemplateLiteral,
     VariableDeclarator,
 };
 use oxc_ast_visit::{
     Visit,
-    walk::{walk_function, walk_jsx_element, walk_variable_declarator},
+    walk::{
+        walk_call_expression, walk_class, walk_function, walk_jsx_element, walk_variable_declarator,
+    },
 };
 use oxc_parser::Parser;
 use oxc_span::SourceType;
@@ -79,6 +81,8 @@ pub struct ScanPolicy {
     pub rule_minimum_scores: BTreeMap<String, u8>,
     pub rule_minimum_confidences: BTreeMap<String, String>,
     pub class_functions: BTreeSet<String>,
+    pub component_wrappers: BTreeSet<String>,
+    pub jsx_extensions: BTreeSet<String>,
     pub max_files: usize,
     pub max_source_bytes: u64,
     pub max_file_bytes: u64,
@@ -102,6 +106,11 @@ impl Default for ScanPolicy {
                 .into_iter()
                 .map(str::to_owned)
                 .collect(),
+            component_wrappers: ["memo", "forwardRef"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            jsx_extensions: ["jsx", "tsx"].into_iter().map(str::to_owned).collect(),
             max_files: 20_000,
             max_source_bytes: 512 * 1024 * 1024,
             max_file_bytes: 2 * 1024 * 1024,
@@ -253,7 +262,7 @@ struct CvaBinding {
 
 #[derive(Debug, Clone)]
 struct CvaCompound {
-    selections: BTreeMap<String, String>,
+    selections: BTreeMap<String, BTreeSet<String>>,
     classes: String,
 }
 
@@ -277,11 +286,13 @@ struct CandidateVisitor<'a> {
     generic_depth: usize,
     approved_signals: &'a BTreeSet<String>,
     class_functions: &'a BTreeSet<String>,
+    component_wrappers: &'a BTreeSet<String>,
     class_bindings: BTreeMap<String, String>,
     inline_style_bindings: BTreeMap<String, BTreeMap<&'static str, u8>>,
     cva_bindings: BTreeMap<String, CvaBinding>,
     max_reachable_states: usize,
     semantic_class_signals: &'a BTreeMap<String, BTreeSet<String>>,
+    ownership_diagnostics: Vec<(String, String)>,
 }
 
 impl<'a> CandidateVisitor<'a> {
@@ -419,7 +430,6 @@ impl<'a> CandidateVisitor<'a> {
         }
 
         let span = element.opening_element.span;
-        let (line, column) = line_column(self.source, span.start as usize);
         let snippet = source_slice(self.source, span.start, span.end)
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -436,7 +446,32 @@ impl<'a> CandidateVisitor<'a> {
             .iter()
             .filter(|child| matches!(child, JSXChild::Element(_)))
             .count();
-        let role = structural_role(&tag).to_owned();
+        self.record_element(
+            owner,
+            &tag,
+            class_states,
+            inline_signals,
+            span.start,
+            snippet,
+            eligible_display,
+            child_element_count,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_element(
+        &mut self,
+        owner: ComponentOwner<'a>,
+        tag: &str,
+        class_states: Vec<ResolvedClassState>,
+        inline_signals: BTreeMap<&'static str, u8>,
+        span_start: u32,
+        snippet: String,
+        eligible_display: bool,
+        child_element_count: usize,
+    ) {
+        let (line, column) = line_column(self.source, span_start as usize);
+        let role = structural_role(tag).to_owned();
         let mut expanded_states = Vec::new();
         let mut state_overflow = false;
         for class_state in class_states {
@@ -500,7 +535,7 @@ impl<'a> CandidateVisitor<'a> {
                     )
                 });
             let stock_structures =
-                collect_stock_structures(&tag, &class_tokens, &signature, child_element_count);
+                collect_stock_structures(tag, &class_tokens, &signature, child_element_count);
             self.facts.push(ElementFact {
                 path: self.path.to_owned(),
                 owner: owner.name.to_owned(),
@@ -530,6 +565,130 @@ impl<'a> CandidateVisitor<'a> {
             }
         }
     }
+
+    fn inspect_runtime_element(&mut self, call: &CallExpression<'a>) {
+        let is_create_element = match &call.callee {
+            Expression::Identifier(identifier) => identifier.name == "createElement",
+            expression => expression.as_member_expression().is_some_and(|member| {
+                member.static_property_name() == Some("createElement")
+                    && matches!(
+                        member.object(),
+                        Expression::Identifier(identifier) if identifier.name == "React"
+                    )
+            }),
+        };
+        let is_jsx_runtime = matches!(
+            &call.callee,
+            Expression::Identifier(identifier)
+                if matches!(identifier.name.as_str(), "_jsx" | "_jsxs" | "jsx" | "jsxs")
+        );
+        if !is_create_element && !is_jsx_runtime {
+            return;
+        }
+        let Some(tag) = call
+            .arguments
+            .first()
+            .and_then(|argument| argument.as_expression())
+            .and_then(static_class_text)
+        else {
+            return;
+        };
+        let Some(props) = call
+            .arguments
+            .get(1)
+            .and_then(|argument| argument.as_expression())
+            .and_then(as_object_expression)
+        else {
+            return;
+        };
+        let Some(class_expression) = object_expression_property(props, "className") else {
+            return;
+        };
+        let Some(owner) = self.owners.last().copied() else {
+            self.unresolved_unowned_style += 1;
+            return;
+        };
+        self.style_expressions_total += 1;
+        let Some(class_states) =
+            resolve_expression_class_states(class_expression, "default", self.class_functions)
+        else {
+            self.unresolved_dynamic_style += 1;
+            return;
+        };
+        self.style_expressions_resolved += 1;
+        let has_children = if is_create_element {
+            call.arguments.len() > 2
+        } else {
+            object_expression_property(props, "children").is_some()
+        };
+        let snippet = source_slice(self.source, call.span.start, call.span.end)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        self.record_element(
+            owner,
+            &tag,
+            class_states,
+            BTreeMap::new(),
+            call.span.start,
+            snippet,
+            has_children
+                && !matches!(
+                    tag.as_str(),
+                    "button" | "input" | "select" | "textarea" | "option" | "label"
+                ),
+            0,
+        );
+    }
+}
+
+fn expression_static_name(expression: &Expression<'_>) -> Option<String> {
+    match expression {
+        Expression::Identifier(identifier) => Some(identifier.name.to_string()),
+        _ => expression
+            .as_member_expression()
+            .and_then(|member| member.static_property_name())
+            .map(str::to_owned),
+    }
+}
+
+fn is_transparent_component_expression(
+    expression: &Expression<'_>,
+    wrappers: &BTreeSet<String>,
+) -> bool {
+    match expression {
+        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => true,
+        Expression::ParenthesizedExpression(parenthesized) => {
+            is_transparent_component_expression(&parenthesized.expression, wrappers)
+        }
+        Expression::CallExpression(call) => {
+            expression_static_name(&call.callee).is_some_and(|name| wrappers.contains(&name))
+                && call
+                    .arguments
+                    .first()
+                    .and_then(|argument| argument.as_expression())
+                    .is_some_and(|argument| is_transparent_component_expression(argument, wrappers))
+        }
+        _ => false,
+    }
+}
+
+fn is_react_component_class(class: &Class<'_>) -> bool {
+    class.super_class.as_ref().is_some_and(|super_class| {
+        matches!(
+            super_class,
+            Expression::Identifier(identifier)
+                if matches!(identifier.name.as_str(), "Component" | "PureComponent")
+        ) || super_class.as_member_expression().is_some_and(|member| {
+            matches!(
+                member.static_property_name(),
+                Some("Component" | "PureComponent")
+            ) && matches!(
+                member.object(),
+                Expression::Identifier(identifier) if identifier.name == "React"
+            )
+        })
+    })
 }
 
 fn expand_variant_states(
@@ -620,8 +779,56 @@ fn split_variant_token(token: &str) -> Vec<&str> {
 }
 
 fn conditions_compatible(left: &BTreeSet<String>, right: &BTreeSet<String>) -> bool {
-    !((left.contains("dark") && right.contains("light"))
-        || (left.contains("light") && right.contains("dark")))
+    if (left.contains("dark") && right.contains("light"))
+        || (left.contains("light") && right.contains("dark"))
+    {
+        return false;
+    }
+    let Some(left_constraints) = condition_assignments(left) else {
+        return false;
+    };
+    let Some(right_constraints) = condition_assignments(right) else {
+        return false;
+    };
+    !right_constraints.iter().any(|(property, value)| {
+        left_constraints
+            .get(property)
+            .is_some_and(|existing| existing != value)
+    })
+}
+
+fn condition_assignments(conditions: &BTreeSet<String>) -> Option<BTreeMap<String, String>> {
+    if conditions.contains("dark") && conditions.contains("light") {
+        return None;
+    }
+    let mut assignments = BTreeMap::new();
+    for (property, value) in conditions
+        .iter()
+        .filter_map(|condition| condition_assignment(condition))
+    {
+        if assignments
+            .insert(property, value.clone())
+            .is_some_and(|existing| existing != value)
+        {
+            return None;
+        }
+    }
+    Some(assignments)
+}
+
+fn condition_assignment(condition: &str) -> Option<(String, String)> {
+    let namespace = if condition.starts_with("data-[") {
+        "data"
+    } else if condition.starts_with("aria-[") {
+        "aria"
+    } else {
+        return None;
+    };
+    let body = condition
+        .strip_prefix(&format!("{namespace}-["))?
+        .strip_suffix(']')?;
+    let (property, value) = body.split_once('=')?;
+    Some((format!("{namespace}:{property}"), value.to_owned()))
 }
 
 fn resolve_jsx_class_states(
@@ -830,7 +1037,7 @@ fn parse_cva_binding(call: &CallExpression<'_>) -> Option<CvaBinding> {
                         .into_iter()
                         .find_map(|name| object_expression_property(object, name))
                         .and_then(static_class_text)?;
-                    let mut selections = static_selection_object(object)?;
+                    let mut selections = static_compound_selection_object(object)?;
                     selections.remove("class");
                     selections.remove("className");
                     Some(CvaCompound {
@@ -906,11 +1113,11 @@ fn resolve_cva_call(
             .into_iter()
             .map(|(selections, mut classes)| {
                 for compound in &binding.compounds {
-                    if compound
-                        .selections
-                        .iter()
-                        .all(|(axis, value)| selections.get(axis) == Some(value))
-                    {
+                    if compound.selections.iter().all(|(axis, values)| {
+                        selections
+                            .get(axis)
+                            .is_some_and(|selected| values.contains(selected))
+                    }) {
                         classes = format!("{classes} {}", compound.classes).trim().to_owned();
                     }
                 }
@@ -942,6 +1149,29 @@ fn static_selection_object(object: &ObjectExpression<'_>) -> Option<BTreeMap<Str
                 property.key.static_name()?.to_string(),
                 static_selector_value(&property.value)?,
             ))
+        })
+        .collect()
+}
+
+fn static_compound_selection_object(
+    object: &ObjectExpression<'_>,
+) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    object
+        .properties
+        .iter()
+        .map(|property| {
+            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                return None;
+            };
+            let values = match &property.value {
+                Expression::ArrayExpression(array) => array
+                    .elements
+                    .iter()
+                    .map(|element| element.as_expression().and_then(static_selector_value))
+                    .collect::<Option<BTreeSet<_>>>()?,
+                expression => [static_selector_value(expression)?].into_iter().collect(),
+            };
+            Some((property.key.static_name()?.to_string(), values))
         })
         .collect()
 }
@@ -1012,10 +1242,16 @@ fn static_class_text(expression: &Expression<'_>) -> Option<String> {
 
 impl<'a> Visit<'a> for CandidateVisitor<'a> {
     fn visit_function(&mut self, function: &Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
-        let owner = function
-            .id
-            .as_ref()
-            .map(|identifier| identifier.name.as_str());
+        let owner = self
+            .owners
+            .is_empty()
+            .then(|| {
+                function
+                    .id
+                    .as_ref()
+                    .map(|identifier| identifier.name.as_str())
+            })
+            .flatten();
         self.with_owner(owner, |visitor| walk_function(visitor, function, flags));
     }
 
@@ -1044,22 +1280,70 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
                 Expression::CallExpression(call) => {
                     if let Some(states) = parse_cva_binding(call) {
                         self.cva_bindings.insert(name.to_string(), states);
+                    } else if call
+                        .arguments
+                        .first()
+                        .and_then(|argument| argument.as_expression())
+                        .is_some_and(|argument| {
+                            matches!(
+                                argument,
+                                Expression::ArrowFunctionExpression(_)
+                                    | Expression::FunctionExpression(_)
+                            )
+                        })
+                        && expression_static_name(&call.callee)
+                            .is_some_and(|callee| !self.component_wrappers.contains(&callee))
+                    {
+                        self.ownership_diagnostics.push((
+                            "opaque-component-wrapper".to_owned(),
+                            format!("component-like binding `{name}` uses an unconfigured wrapper"),
+                        ));
                     }
                 }
                 _ => {}
             }
         }
-        let is_arrow = matches!(
-            declarator.init.as_ref(),
-            Some(Expression::ArrowFunctionExpression(_))
-        );
-        let owner = is_arrow
+        let is_component = declarator.init.as_ref().is_some_and(|initializer| {
+            is_transparent_component_expression(initializer, self.component_wrappers)
+        });
+        let owner = is_component
             .then(|| declarator.id.get_identifier_name())
             .flatten()
             .map(|name| name.as_str());
         self.with_owner(owner, |visitor| {
             walk_variable_declarator(visitor, declarator);
         });
+    }
+
+    fn visit_class(&mut self, class: &Class<'a>) {
+        if !class.decorators.is_empty() {
+            self.ownership_diagnostics.push((
+                "decorated-component".to_owned(),
+                "decorators obscure static render ownership".to_owned(),
+            ));
+        }
+        if class
+            .id
+            .as_ref()
+            .is_some_and(|identifier| is_component_name(identifier.name.as_str()))
+            && class.super_class.is_some()
+            && !is_react_component_class(class)
+        {
+            self.ownership_diagnostics.push((
+                "unsupported-inheritance".to_owned(),
+                "mixin or dynamic inheritance is outside the React class adapter".to_owned(),
+            ));
+        }
+        let owner = is_react_component_class(class)
+            .then_some(class.id.as_ref())
+            .flatten()
+            .map(|identifier| identifier.name.as_str());
+        self.with_owner(owner, |visitor| walk_class(visitor, class));
+    }
+
+    fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        self.inspect_runtime_element(call);
+        walk_call_expression(self, call);
     }
 
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
@@ -1127,6 +1411,7 @@ pub fn scan_with_progress(
         request.policy.max_files,
         request.policy.max_source_bytes,
         request.policy.max_file_bytes,
+        &request.policy.jsx_extensions,
     )?;
     emit_progress(
         &mut progress,
@@ -1180,12 +1465,14 @@ pub fn scan_with_progress(
                 continue;
             }
         };
-        let source_type = SourceType::from_path(&file).map_err(|error| {
-            ScanError::new(format!(
-                "unsupported source type {}: {error}",
-                file.display()
-            ))
-        })?;
+        let source_type = SourceType::from_path(&file)
+            .map_err(|error| {
+                ScanError::new(format!(
+                    "unsupported source type {}: {error}",
+                    file.display()
+                ))
+            })?
+            .with_jsx(true);
         let allocator = Allocator::default();
         let parsed = Parser::new(&allocator, &source, source_type).parse();
         if !parsed.diagnostics.is_empty() {
@@ -1230,6 +1517,7 @@ pub fn scan_with_progress(
             unresolved_dynamic_style,
             reachable_state_overflow,
             unresolved_unowned_style,
+            ownership_diagnostics,
             style_expressions_total,
             style_expressions_resolved,
         ) = {
@@ -1248,11 +1536,13 @@ pub fn scan_with_progress(
                 generic_depth: 0,
                 approved_signals: &request.policy.approved_signals,
                 class_functions: &request.policy.class_functions,
+                component_wrappers: &request.policy.component_wrappers,
                 class_bindings: BTreeMap::new(),
                 inline_style_bindings: BTreeMap::new(),
                 cva_bindings: BTreeMap::new(),
                 max_reachable_states: request.policy.max_reachable_states,
                 semantic_class_signals: &request.policy.semantic_class_signals,
+                ownership_diagnostics: Vec::new(),
             };
             visitor.visit_program(&parsed.program);
             (
@@ -1261,6 +1551,7 @@ pub fn scan_with_progress(
                 visitor.unresolved_dynamic_style,
                 visitor.reachable_state_overflow,
                 visitor.unresolved_unowned_style,
+                visitor.ownership_diagnostics,
                 visitor.style_expressions_total,
                 visitor.style_expressions_resolved,
             )
@@ -1287,7 +1578,7 @@ pub fn scan_with_progress(
         }
         if unresolved_unowned_style > 0 {
             coverage.unresolved.push(CoverageIssue {
-                path: relative,
+                path: relative.clone(),
                 reason: "unresolved-owner".to_owned(),
                 detail: format!(
                     "{} styled JSX element(s) had no supported named component owner",
@@ -1295,6 +1586,17 @@ pub fn scan_with_progress(
                 ),
             });
         }
+        coverage
+            .unresolved
+            .extend(
+                ownership_diagnostics
+                    .into_iter()
+                    .map(|(reason, detail)| CoverageIssue {
+                        path: relative.clone(),
+                        reason,
+                        detail,
+                    }),
+            );
         candidates.extend(file_candidates);
         facts.extend(file_facts);
         coverage.files_analyzed += 1;
@@ -1376,7 +1678,7 @@ pub fn scan_with_progress(
 
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
-        schema_version: "0.5.0".to_owned(),
+        schema_version: "0.6.0".to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
@@ -1466,6 +1768,7 @@ fn discover_source_files(
     max_files: usize,
     max_source_bytes: u64,
     max_file_bytes: u64,
+    jsx_extensions: &BTreeSet<String>,
 ) -> Result<DiscoveredSources, ScanError> {
     fn visit(
         root: &Path,
@@ -1474,6 +1777,7 @@ fn discover_source_files(
         visited_directories: &mut BTreeSet<PathBuf>,
         files: &mut BTreeMap<PathBuf, PathBuf>,
         issues: &mut Vec<CoverageIssue>,
+        jsx_extensions: &BTreeSet<String>,
     ) -> Result<(), ScanError> {
         let resolved_directory = directory.canonicalize().map_err(|error| {
             ScanError::new(format!("cannot resolve {}: {error}", directory.display()))
@@ -1522,8 +1826,9 @@ fn discover_source_files(
                         visited_directories,
                         files,
                         issues,
+                        jsx_extensions,
                     )?;
-                } else if eligible_source(&resolved) {
+                } else if eligible_source(&resolved, jsx_extensions) {
                     files.entry(resolved.clone()).or_insert(resolved);
                 }
                 continue;
@@ -1553,9 +1858,10 @@ fn discover_source_files(
                         visited_directories,
                         files,
                         issues,
+                        jsx_extensions,
                     )?;
                 }
-            } else if file_type.is_file() && eligible_source(&path) {
+            } else if file_type.is_file() && eligible_source(&path, jsx_extensions) {
                 let resolved = path.canonicalize().map_err(|error| {
                     ScanError::new(format!("cannot resolve {}: {error}", path.display()))
                 })?;
@@ -1576,6 +1882,7 @@ fn discover_source_files(
         &mut visited_directories,
         &mut files_by_identity,
         &mut issues,
+        jsx_extensions,
     )?;
     let mut files = files_by_identity.into_values().collect::<Vec<_>>();
     files.sort();
@@ -1740,11 +2047,10 @@ fn glob_matches(pattern: &str, value: &str) -> bool {
     pattern_index == pattern.len()
 }
 
-fn eligible_source(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        Some("jsx" | "tsx")
-    )
+fn eligible_source(path: &Path, jsx_extensions: &BTreeSet<String>) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| jsx_extensions.contains(extension))
 }
 
 fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<Finding> {
