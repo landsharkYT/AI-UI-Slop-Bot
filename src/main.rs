@@ -256,11 +256,16 @@ fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
   "rules": {{}},
   "customArchetypes": [],
   "classFunctions": ["clsx", "classnames", "classNames", "cn", "twMerge"],
+  "tailwindVersion": "auto",
   "resources": {{
     "maxFiles": 20000,
     "maxSourceBytes": 536870912,
     "maxFileBytes": 2097152,
     "maxGraphEdges": 2000000,
+    "maxAuxiliaryFileBytes": 2097152,
+    "maxAuxiliaryBytes": 67108864,
+    "maxStyleImportEdges": 4096,
+    "maxReachableStates": 256,
     "maxScopes": 64,
     "maxDiagnostics": 10000,
     "maxJsonBytes": 268435456,
@@ -436,6 +441,7 @@ fn run_config(arguments: &[String]) -> Result<(), (u8, String)> {
                 "customArchetypes": scope.custom_archetypes,
                 "suppressions": scope.suppressions,
                 "classFunctions": scope.class_functions,
+                "tailwindVersion": scope.tailwind_version,
                 "resources": scope.resources,
                 "provenance": {
                     "mode": "repository-root",
@@ -443,6 +449,7 @@ fn run_config(arguments: &[String]) -> Result<(), (u8, String)> {
                     "rules": "built-in + repository-root",
                     "suppressions": "repository-root",
                     "classFunctions": "repository-root",
+                    "tailwindVersion": "repository-root",
                     "resources": "repository-root"
                 }
             }))

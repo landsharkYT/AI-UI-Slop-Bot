@@ -21,6 +21,7 @@ pub struct ProjectConfig {
     pub rules: BTreeMap<String, RulePolicy>,
     pub custom_archetypes: Vec<CustomArchetype>,
     pub class_functions: Vec<String>,
+    pub tailwind_version: String,
     pub resources: ResourcePolicy,
 }
 
@@ -41,6 +42,7 @@ impl Default for ProjectConfig {
                 "cn".to_owned(),
                 "twMerge".to_owned(),
             ],
+            tailwind_version: "auto".to_owned(),
             resources: ResourcePolicy::default(),
         }
     }
@@ -53,6 +55,10 @@ pub struct ResourcePolicy {
     pub max_source_bytes: u64,
     pub max_file_bytes: u64,
     pub max_graph_edges: usize,
+    pub max_auxiliary_file_bytes: u64,
+    pub max_auxiliary_bytes: u64,
+    pub max_style_import_edges: usize,
+    pub max_reachable_states: usize,
     pub max_scopes: usize,
     pub max_diagnostics: usize,
     pub max_json_bytes: u64,
@@ -66,6 +72,10 @@ impl Default for ResourcePolicy {
             max_source_bytes: 512 * 1024 * 1024,
             max_file_bytes: 2 * 1024 * 1024,
             max_graph_edges: 2_000_000,
+            max_auxiliary_file_bytes: 2 * 1024 * 1024,
+            max_auxiliary_bytes: 64 * 1024 * 1024,
+            max_style_import_edges: 4_096,
+            max_reachable_states: 256,
             max_scopes: 64,
             max_diagnostics: 10_000,
             max_json_bytes: 256 * 1024 * 1024,
@@ -217,6 +227,7 @@ pub struct EffectiveScope {
     pub rules: BTreeMap<String, RulePolicy>,
     pub custom_archetypes: Vec<CustomArchetype>,
     pub class_functions: Vec<String>,
+    pub tailwind_version: String,
     pub route_overrides: Vec<RouteOverride>,
     pub resources: ResourcePolicy,
     pub mode: AnalysisMode,
@@ -251,12 +262,22 @@ fn validate_config(config: &ProjectConfig) -> Result<(), String> {
         || config.resources.max_source_bytes == 0
         || config.resources.max_file_bytes == 0
         || config.resources.max_graph_edges == 0
+        || config.resources.max_auxiliary_file_bytes == 0
+        || config.resources.max_auxiliary_bytes == 0
+        || config.resources.max_style_import_edges == 0
+        || config.resources.max_reachable_states == 0
         || config.resources.max_scopes == 0
         || config.resources.max_diagnostics == 0
         || config.resources.max_json_bytes == 0
         || config.resources.max_markdown_bytes == 0
     {
         return Err("resource ceilings must be greater than zero".to_owned());
+    }
+    if !matches!(config.tailwind_version.as_str(), "auto" | "3" | "4") {
+        return Err("tailwindVersion must be auto, 3, or 4".to_owned());
+    }
+    if config.resources.max_reachable_states > 4_096 {
+        return Err("maxReachableStates must not exceed 4096".to_owned());
     }
     if config.scopes.len() > config.resources.max_scopes {
         return Err(format!(
@@ -479,6 +500,7 @@ pub fn resolve_scopes(
             &config.rules,
             &config.custom_archetypes,
             &config.class_functions,
+            &config.tailwind_version,
             &config.resources,
             config.mode,
         ))
@@ -493,6 +515,7 @@ pub fn resolve_scopes(
             rules: config.rules.clone(),
             custom_archetypes: config.custom_archetypes.clone(),
             class_functions: config.class_functions.clone(),
+            tailwind_version: config.tailwind_version.clone(),
             route_overrides: scope.routes.clone(),
             resources: config.resources.clone(),
             mode: config.mode,

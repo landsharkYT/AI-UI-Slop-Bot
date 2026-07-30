@@ -5,12 +5,13 @@ mod baseline;
 mod catalog;
 mod graph;
 pub mod policy;
+mod style;
 
 pub use app::{
     ArchetypeMatch, CanonicalReport, ComponentProfile, CoverageDimension, CoverageVector,
     ReportSummary, RepositoryError, RepositoryProfile, RepositoryRequest, RouteClassification,
-    ScopeDiagnostic, ScopeReport, StyleAdapterReport, analyze_repository,
-    analyze_repository_with_progress, render_refactoring_brief,
+    ScopeDiagnostic, ScopeReport, analyze_repository, analyze_repository_with_progress,
+    render_refactoring_brief,
 };
 pub use baseline::{
     BASELINE_SCHEMA_VERSION, BaselineArtifact, BaselineChange, BaselineComparison, BaselineFinding,
@@ -22,6 +23,7 @@ pub use catalog::{
     structural_signal_catalog,
 };
 pub use graph::{GraphEdge, GraphNode, RepositoryGraph};
+pub use style::StyleAdapterReport;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -81,6 +83,8 @@ pub struct ScanPolicy {
     pub max_source_bytes: u64,
     pub max_file_bytes: u64,
     pub max_diagnostics: usize,
+    pub max_reachable_states: usize,
+    pub semantic_class_signals: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Default for ScanPolicy {
@@ -102,6 +106,8 @@ impl Default for ScanPolicy {
             max_source_bytes: 512 * 1024 * 1024,
             max_file_bytes: 2 * 1024 * 1024,
             max_diagnostics: 10_000,
+            max_reachable_states: 256,
+            semantic_class_signals: BTreeMap::new(),
         }
     }
 }
@@ -237,6 +243,20 @@ struct ResolvedClassState {
     classes: String,
 }
 
+#[derive(Debug, Clone)]
+struct CvaBinding {
+    base: String,
+    variants: BTreeMap<String, BTreeMap<String, String>>,
+    defaults: BTreeMap<String, String>,
+    compounds: Vec<CvaCompound>,
+}
+
+#[derive(Debug, Clone)]
+struct CvaCompound {
+    selections: BTreeMap<String, String>,
+    classes: String,
+}
+
 #[derive(Clone, Copy)]
 struct ComponentOwner<'a> {
     name: &'a str,
@@ -249,6 +269,7 @@ struct CandidateVisitor<'a> {
     candidates: Vec<Candidate>,
     facts: Vec<ElementFact>,
     unresolved_dynamic_style: usize,
+    reachable_state_overflow: usize,
     unresolved_unowned_style: usize,
     style_expressions_total: usize,
     style_expressions_resolved: usize,
@@ -258,7 +279,9 @@ struct CandidateVisitor<'a> {
     class_functions: &'a BTreeSet<String>,
     class_bindings: BTreeMap<String, String>,
     inline_style_bindings: BTreeMap<String, BTreeMap<&'static str, u8>>,
-    cva_bindings: BTreeMap<String, Vec<ResolvedClassState>>,
+    cva_bindings: BTreeMap<String, CvaBinding>,
+    max_reachable_states: usize,
+    semantic_class_signals: &'a BTreeMap<String, BTreeSet<String>>,
 }
 
 impl<'a> CandidateVisitor<'a> {
@@ -336,12 +359,16 @@ impl<'a> CandidateVisitor<'a> {
                                     }
                                     _ => None,
                                 };
-                                factory.or_else(|| {
-                                    resolve_jsx_class_states(
-                                        &container.expression,
-                                        self.class_functions,
-                                    )
-                                })
+                                factory
+                                    .and_then(|binding| {
+                                        resolve_cva_call(&binding, call, self.max_reachable_states)
+                                    })
+                                    .or_else(|| {
+                                        resolve_jsx_class_states(
+                                            &container.expression,
+                                            self.class_functions,
+                                        )
+                                    })
                             }
                             expression => {
                                 resolve_jsx_class_states(expression, self.class_functions)
@@ -410,7 +437,20 @@ impl<'a> CandidateVisitor<'a> {
             .filter(|child| matches!(child, JSXChild::Element(_)))
             .count();
         let role = structural_role(&tag).to_owned();
+        let mut expanded_states = Vec::new();
+        let mut state_overflow = false;
         for class_state in class_states {
+            match expand_variant_states(class_state, self.max_reachable_states) {
+                Some(states) => expanded_states.extend(states),
+                None => state_overflow = true,
+            }
+        }
+        if state_overflow {
+            self.reachable_state_overflow += 1;
+            self.style_expressions_resolved = self.style_expressions_resolved.saturating_sub(1);
+            return;
+        }
+        for class_state in expanded_states {
             let class_tokens = class_state
                 .classes
                 .split_ascii_whitespace()
@@ -418,6 +458,15 @@ impl<'a> CandidateVisitor<'a> {
                 .collect::<Vec<_>>();
             let mut signals = inline_signals.clone();
             collect_class_signals(&class_state.classes, &mut signals);
+            for token in &class_tokens {
+                if let Some(configured) = self.semantic_class_signals.get(token) {
+                    for signal in configured {
+                        if let Some(signal_id) = configured_signal_id(signal) {
+                            signals.insert(signal_id, configured_signal_weight(signal));
+                        }
+                    }
+                }
+            }
             signals.retain(|signal, _| !self.approved_signals.contains(*signal));
             let signature = signals
                 .keys()
@@ -481,6 +530,98 @@ impl<'a> CandidateVisitor<'a> {
             }
         }
     }
+}
+
+fn expand_variant_states(
+    state: ResolvedClassState,
+    max_states: usize,
+) -> Option<Vec<ResolvedClassState>> {
+    let mut base = Vec::new();
+    let mut conditional = Vec::new();
+    for token in state.classes.split_ascii_whitespace() {
+        let parts = split_variant_token(token);
+        if parts.len() == 1 {
+            base.push(token.to_owned());
+        } else {
+            conditional.push((
+                parts[..parts.len() - 1]
+                    .iter()
+                    .map(|part| (*part).to_owned())
+                    .collect::<BTreeSet<_>>(),
+                parts[parts.len() - 1].to_owned(),
+            ));
+        }
+    }
+    if conditional.is_empty() {
+        return Some(vec![state]);
+    }
+    let base_classes = base.join(" ");
+    let mut states = BTreeMap::<BTreeSet<String>, String>::new();
+    states.insert(BTreeSet::new(), base_classes.clone());
+    for (conditions, utility) in conditional {
+        let existing = states
+            .iter()
+            .map(|(conditions, classes)| (conditions.clone(), classes.clone()))
+            .collect::<Vec<_>>();
+        for (existing_conditions, classes) in existing {
+            if !conditions_compatible(&existing_conditions, &conditions) {
+                continue;
+            }
+            let combined = existing_conditions
+                .union(&conditions)
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let entry = states.entry(combined).or_insert(classes);
+            if !entry.split_ascii_whitespace().any(|value| value == utility) {
+                entry.push(' ');
+                entry.push_str(&utility);
+            }
+            if states.len() > max_states {
+                return None;
+            }
+        }
+    }
+    Some(
+        states
+            .into_iter()
+            .map(|(conditions, classes)| ResolvedClassState {
+                id: if conditions.is_empty() {
+                    state.id.clone()
+                } else {
+                    format!(
+                        "{}/conditions:{}",
+                        state.id,
+                        conditions.into_iter().collect::<Vec<_>>().join("+")
+                    )
+                },
+                classes: classes.trim().to_owned(),
+            })
+            .collect(),
+    )
+}
+
+fn split_variant_token(token: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut bracket_depth = 0_u32;
+    for (index, character) in token.char_indices() {
+        match character {
+            '[' | '(' => bracket_depth += 1,
+            ']' | ')' => bracket_depth = bracket_depth.saturating_sub(1),
+            ':' if bracket_depth == 0 => {
+                parts.push(&token[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&token[start..]);
+    parts
+}
+
+fn conditions_compatible(left: &BTreeSet<String>, right: &BTreeSet<String>) -> bool {
+    !((left.contains("dark") && right.contains("light"))
+        || (left.contains("light") && right.contains("dark")))
 }
 
 fn resolve_jsx_class_states(
@@ -618,7 +759,7 @@ fn resolve_static_template(
     }])
 }
 
-fn parse_cva_binding(call: &CallExpression<'_>) -> Option<Vec<ResolvedClassState>> {
+fn parse_cva_binding(call: &CallExpression<'_>) -> Option<CvaBinding> {
     let Expression::Identifier(callee) = &call.callee else {
         return None;
     };
@@ -637,38 +778,205 @@ fn parse_cva_binding(call: &CallExpression<'_>) -> Option<Vec<ResolvedClassState
         .and_then(|argument| argument.as_expression())
         .and_then(as_object_expression)
     else {
-        return Some(vec![ResolvedClassState {
-            id: "cva:base".to_owned(),
-            classes: base,
-        }]);
+        return Some(CvaBinding {
+            base,
+            variants: BTreeMap::new(),
+            defaults: BTreeMap::new(),
+            compounds: Vec::new(),
+        });
     };
-    let variants =
-        object_expression_property(options, "variants").and_then(as_object_expression)?;
-    let mut states = vec![ResolvedClassState {
-        id: "cva:base".to_owned(),
-        classes: base,
-    }];
-    for axis_property in &variants.properties {
-        let ObjectPropertyKind::ObjectProperty(axis_property) = axis_property else {
-            return None;
-        };
-        let axis = axis_property.key.static_name()?.to_string();
-        let values = as_object_expression(&axis_property.value)?;
-        let mut axis_states = Vec::new();
-        for value_property in &values.properties {
-            let ObjectPropertyKind::ObjectProperty(value_property) = value_property else {
+    let mut variants = BTreeMap::new();
+    if let Some(variant_object) =
+        object_expression_property(options, "variants").and_then(as_object_expression)
+    {
+        for axis_property in &variant_object.properties {
+            let ObjectPropertyKind::ObjectProperty(axis_property) = axis_property else {
                 return None;
             };
-            let value = value_property.key.static_name()?.to_string();
-            let classes = static_class_text(&value_property.value)?;
-            axis_states.push(ResolvedClassState {
-                id: format!("{axis}:{value}"),
-                classes,
-            });
+            let axis = axis_property.key.static_name()?.to_string();
+            let values = as_object_expression(&axis_property.value)?;
+            let mut axis_values = BTreeMap::new();
+            for value_property in &values.properties {
+                let ObjectPropertyKind::ObjectProperty(value_property) = value_property else {
+                    return None;
+                };
+                axis_values.insert(
+                    value_property.key.static_name()?.to_string(),
+                    static_class_text(&value_property.value)?,
+                );
+            }
+            variants.insert(axis, axis_values);
         }
-        states = combine_class_states(states, axis_states)?;
     }
-    Some(states)
+    let defaults = match object_expression_property(options, "defaultVariants")
+        .and_then(as_object_expression)
+    {
+        Some(object) => static_selection_object(object)?,
+        None => BTreeMap::new(),
+    };
+    let compounds =
+        match object_expression_property(options, "compoundVariants").and_then(|expression| {
+            match expression {
+                Expression::ArrayExpression(array) => Some(array),
+                _ => None,
+            }
+        }) {
+            Some(array) => array
+                .elements
+                .iter()
+                .map(|element| {
+                    let object = element.as_expression().and_then(as_object_expression)?;
+                    let classes = ["class", "className"]
+                        .into_iter()
+                        .find_map(|name| object_expression_property(object, name))
+                        .and_then(static_class_text)?;
+                    let mut selections = static_selection_object(object)?;
+                    selections.remove("class");
+                    selections.remove("className");
+                    Some(CvaCompound {
+                        selections,
+                        classes,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+            None => Vec::new(),
+        };
+    Some(CvaBinding {
+        base,
+        variants,
+        defaults,
+        compounds,
+    })
+}
+
+fn resolve_cva_call(
+    binding: &CvaBinding,
+    call: &CallExpression<'_>,
+    max_states: usize,
+) -> Option<Vec<ResolvedClassState>> {
+    let (explicit, dynamic_axes, dynamic_spread) = match call
+        .arguments
+        .first()
+        .and_then(|argument| argument.as_expression())
+        .and_then(as_object_expression)
+    {
+        Some(object) => static_call_selections(object),
+        None => (BTreeMap::new(), BTreeSet::new(), false),
+    };
+    let mut selections = binding.defaults.clone();
+    for axis in dynamic_axes {
+        selections.remove(&axis);
+    }
+    if dynamic_spread {
+        selections.clear();
+    }
+    selections.extend(explicit);
+    let mut states = vec![(BTreeMap::<String, String>::new(), binding.base.clone())];
+    for (axis, values) in &binding.variants {
+        let selected = selections
+            .get(axis)
+            .and_then(|value| values.get(value).map(|classes| (value, classes)));
+        let choices = selected
+            .into_iter()
+            .chain(
+                (!selections.contains_key(axis))
+                    .then_some(())
+                    .into_iter()
+                    .flat_map(|()| values.iter()),
+            )
+            .collect::<Vec<_>>();
+        if choices.is_empty() || states.len().saturating_mul(choices.len()) > max_states {
+            return None;
+        }
+        let mut next = Vec::with_capacity(states.len() * choices.len());
+        for (state_selections, classes) in states {
+            for (value, variant_classes) in &choices {
+                let mut state_selections = state_selections.clone();
+                state_selections.insert(axis.clone(), (*value).clone());
+                next.push((
+                    state_selections,
+                    format!("{classes} {variant_classes}").trim().to_owned(),
+                ));
+            }
+        }
+        states = next;
+    }
+    Some(
+        states
+            .into_iter()
+            .map(|(selections, mut classes)| {
+                for compound in &binding.compounds {
+                    if compound
+                        .selections
+                        .iter()
+                        .all(|(axis, value)| selections.get(axis) == Some(value))
+                    {
+                        classes = format!("{classes} {}", compound.classes).trim().to_owned();
+                    }
+                }
+                ResolvedClassState {
+                    id: format!(
+                        "cva:{}",
+                        selections
+                            .iter()
+                            .map(|(axis, value)| format!("{axis}:{value}"))
+                            .collect::<Vec<_>>()
+                            .join("+")
+                    ),
+                    classes,
+                }
+            })
+            .collect(),
+    )
+}
+
+fn static_selection_object(object: &ObjectExpression<'_>) -> Option<BTreeMap<String, String>> {
+    object
+        .properties
+        .iter()
+        .map(|property| {
+            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                return None;
+            };
+            Some((
+                property.key.static_name()?.to_string(),
+                static_selector_value(&property.value)?,
+            ))
+        })
+        .collect()
+}
+
+fn static_call_selections(
+    object: &ObjectExpression<'_>,
+) -> (BTreeMap<String, String>, BTreeSet<String>, bool) {
+    let mut selected = BTreeMap::new();
+    let mut dynamic = BTreeSet::new();
+    let mut spread = false;
+    for property in &object.properties {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            spread = true;
+            continue;
+        };
+        let Some(axis) = property.key.static_name().map(|name| name.to_string()) else {
+            spread = true;
+            continue;
+        };
+        if let Some(value) = static_selector_value(&property.value) {
+            selected.insert(axis, value);
+        } else {
+            dynamic.insert(axis);
+        }
+    }
+    (selected, dynamic, spread)
+}
+
+fn static_selector_value(expression: &Expression<'_>) -> Option<String> {
+    match expression {
+        Expression::StringLiteral(literal) => Some(literal.value.to_string()),
+        Expression::BooleanLiteral(literal) => Some(literal.value.to_string()),
+        Expression::NumericLiteral(literal) => Some(literal.value.to_string()),
+        _ => None,
+    }
 }
 
 fn as_object_expression<'a>(expression: &'a Expression<'a>) -> Option<&'a ObjectExpression<'a>> {
@@ -920,6 +1228,7 @@ pub fn scan_with_progress(
             file_candidates,
             file_facts,
             unresolved_dynamic_style,
+            reachable_state_overflow,
             unresolved_unowned_style,
             style_expressions_total,
             style_expressions_resolved,
@@ -931,6 +1240,7 @@ pub fn scan_with_progress(
                 candidates: Vec::new(),
                 facts: Vec::new(),
                 unresolved_dynamic_style: 0,
+                reachable_state_overflow: 0,
                 unresolved_unowned_style: 0,
                 style_expressions_total: 0,
                 style_expressions_resolved: 0,
@@ -941,12 +1251,15 @@ pub fn scan_with_progress(
                 class_bindings: BTreeMap::new(),
                 inline_style_bindings: BTreeMap::new(),
                 cva_bindings: BTreeMap::new(),
+                max_reachable_states: request.policy.max_reachable_states,
+                semantic_class_signals: &request.policy.semantic_class_signals,
             };
             visitor.visit_program(&parsed.program);
             (
                 visitor.candidates,
                 visitor.facts,
                 visitor.unresolved_dynamic_style,
+                visitor.reachable_state_overflow,
                 visitor.unresolved_unowned_style,
                 visitor.style_expressions_total,
                 visitor.style_expressions_resolved,
@@ -959,6 +1272,16 @@ pub fn scan_with_progress(
                 detail: format!(
                     "{} unsupported dynamic class/style attribute(s)",
                     unresolved_dynamic_style
+                ),
+            });
+        }
+        if reachable_state_overflow > 0 {
+            coverage.unresolved.push(CoverageIssue {
+                path: relative.clone(),
+                reason: "reachable-state-budget".to_owned(),
+                detail: format!(
+                    "{reachable_state_overflow} expression(s) exceeded maxReachableStates={}",
+                    request.policy.max_reachable_states
                 ),
             });
         }
@@ -1053,7 +1376,7 @@ pub fn scan_with_progress(
 
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
-        schema_version: "0.4.0".to_owned(),
+        schema_version: "0.5.0".to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
@@ -2099,6 +2422,26 @@ fn collect_class_signals(classes: &str, signals: &mut BTreeMap<&'static str, u8>
     let vertical = tokens.iter().any(|token| spacing_at_least(token, "py-", 8));
     if uniform_padding || (horizontal && vertical) {
         signals.insert("generous-padding", 12);
+    }
+}
+
+fn configured_signal_id(signal: &str) -> Option<&'static str> {
+    match signal {
+        "extreme-radius" => Some("extreme-radius"),
+        "gradient-surface" => Some("gradient-surface"),
+        "large-shadow" => Some("large-shadow"),
+        "generous-padding" => Some("generous-padding"),
+        _ => None,
+    }
+}
+
+fn configured_signal_weight(signal: &str) -> u8 {
+    match signal {
+        "gradient-surface" => 18,
+        "large-shadow" => 16,
+        "extreme-radius" => 12,
+        "generous-padding" => 8,
+        _ => 0,
     }
 }
 

@@ -50,6 +50,7 @@
         "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
       }
     },
+    "tailwindVersion": { "enum": ["auto", "3", "4"] },
     "resources": {
       "type": "object",
       "properties": {
@@ -57,6 +58,10 @@
         "maxSourceBytes": { "type": "integer", "minimum": 1 },
         "maxFileBytes": { "type": "integer", "minimum": 1 },
         "maxGraphEdges": { "type": "integer", "minimum": 1 },
+        "maxAuxiliaryFileBytes": { "type": "integer", "minimum": 1 },
+        "maxAuxiliaryBytes": { "type": "integer", "minimum": 1 },
+        "maxStyleImportEdges": { "type": "integer", "minimum": 1 },
+        "maxReachableStates": { "type": "integer", "minimum": 1, "maximum": 4096 },
         "maxScopes": { "type": "integer", "minimum": 1, "maximum": 64 },
         "maxDiagnostics": { "type": "integer", "minimum": 1 },
         "maxJsonBytes": { "type": "integer", "minimum": 1 },

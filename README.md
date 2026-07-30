@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at the **Shot 4 implementation candidate** (`0.4.0`): product breadth, principal hardening seams, and a bounded static style-adapter slice are represented end to end, but external calibration, hosted platform qualification, and remaining implementation gates are incomplete. It must not be presented as Validated MVP or Full V1.
+The repository is at the **Shot 5 implementation candidate** (`0.5.0`): product breadth, principal hardening seams, and bounded reachable-style semantics are represented end to end, but external calibration, hosted platform qualification, and remaining implementation gates are incomplete. It must not be presented as Validated MVP or Full V1.
 
 ## Run it
 
@@ -14,8 +14,8 @@ The scan:
 
 - loads independent monorepository Analysis Scopes from JSONC configuration;
 - analyzes named function and arrow-function components in `.jsx` and `.tsx` with Oxc;
-- resolves literal and repository-local constant Tailwind `className` strings, bounded static CVA variant definitions, safely interpretable arbitrary values, and literal/shared static inline-style objects;
-- discovers Tailwind package/configuration and v4 CSS-first sources without importing or executing target code, reporting unresolved local CSS imports as coverage loss;
+- resolves literal and repository-local constant Tailwind `className` strings, bounded CVA defaults/static selections/compound variants, compatible theme states, safely interpretable arbitrary values, and literal/shared static inline-style objects;
+- resolves configured, manifest, and lockfile Tailwind versions plus bounded recursive v4 CSS-first sources without importing or executing target code;
 - honors the applicable checkout or Trusted Policy `.gitignore`, deduplicates internal source symlinks, and reports external symlinks as coverage loss;
 - resolves relative imports, `tsconfig` path aliases, barrels, and static lazy imports into the typed graph;
 - identifies Next App Router, Next Pages Router, configured, and static React Router boundaries;
@@ -59,7 +59,7 @@ The public seam tests cover discovery and symlinks, reachable-state class compos
 
 ## Candidate limits
 
-Shot 4 still leaves Tailwind theme-value interpretation, static CVA selections/compound variants and complete symbolic constraints, deeper export and primitive-impact analysis, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 4](docs/shot-4.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
+Shot 5 still leaves full Tailwind theme/custom-utility signal interpretation, array-valued and runtime CVA selections, complete symbolic condition constraints, deeper export and primitive-impact analysis, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 5](docs/shot-5.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
 
 ## License
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-ui-slop.dev/schema/report/3",
+  "$id": "https://ai-ui-slop.dev/schema/report/4",
   "title": "AI UI Slop Canonical Report",
   "type": "object",
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "artifactType": { "const": "ai-ui-slop.canonical-report" },
-    "schemaVersion": { "const": "3" },
+    "schemaVersion": { "const": "4" },
     "toolVersion": { "type": "string" },
     "rulePackVersion": { "type": "string" },
     "fingerprintAlgorithmVersion": { "type": "string" },
@@ -44,14 +44,33 @@
         "properties": {
           "styleAdapter": {
             "type": "object",
-            "required": ["tailwindVersion", "sources", "unresolved"],
+            "required": [
+              "tailwindVersion",
+              "detectionSource",
+              "sources",
+              "unresolved",
+              "configurationImportEdges",
+              "configurationBytes",
+              "resolvedConfigurationValues",
+              "semanticUtilitiesResolved",
+              "customVariants"
+            ],
             "properties": {
               "tailwindVersion": { "type": ["string", "null"] },
+              "detectionSource": { "type": ["string", "null"] },
               "sources": {
                 "type": "array",
                 "items": { "type": "string" }
               },
               "unresolved": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "configurationImportEdges": { "type": "integer", "minimum": 0 },
+              "configurationBytes": { "type": "integer", "minimum": 0 },
+              "resolvedConfigurationValues": { "type": "integer", "minimum": 0 },
+              "semanticUtilitiesResolved": { "type": "integer", "minimum": 0 },
+              "customVariants": {
                 "type": "array",
                 "items": { "type": "string" }
               }
