@@ -135,12 +135,15 @@ impl<'a> StyleAnalysis<'a> {
 
         let mut css_files = Vec::new();
         discover_css_files(self.request.root, &mut css_files)?;
+        let stylesheet_entrypoints =
+            discover_stylesheet_entrypoints(self.request.root, self.request.max_file_bytes)?;
         css_files.sort();
         for path in css_files {
             let Some(source) = self.read_candidate_css(&path) else {
                 continue;
             };
-            if has_tailwind_directive(&source) {
+            let is_tailwind = has_tailwind_directive(&source);
+            if is_tailwind {
                 if self.version.is_none() {
                     self.version = Some("4".to_owned());
                     self.detection_source = Some("css".to_owned());
@@ -151,6 +154,9 @@ impl<'a> StyleAnalysis<'a> {
                         self.version.as_deref().unwrap_or("unknown")
                     ));
                 }
+            }
+            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            if is_tailwind || stylesheet_entrypoints.contains(&canonical) {
                 self.visit_css(path, Some(source), 0)?;
             }
         }
@@ -246,6 +252,12 @@ impl<'a> StyleAnalysis<'a> {
             self.configuration_bytes += bytes;
         }
         self.sources.insert(self.relative(&path));
+        if collect_plain_css_semantic_classes(&source, &mut self.semantic_utilities) {
+            self.unresolved.insert(format!(
+                "{}: signal-bearing conditional or compound plain CSS selectors remain unresolved",
+                self.relative(&path)
+            ));
+        }
         self.resolved_configuration_values += count_css_configuration_values(&source);
         collect_v4_semantic_utilities(&source, &mut self.semantic_utilities);
         self.custom_variants
@@ -474,6 +486,74 @@ fn collect_v4_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, 
         }
         remainder = &remainder[close + 1..];
     }
+}
+
+fn collect_plain_css_semantic_classes(
+    source: &str,
+    classes: &mut BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    let source = strip_css_comments(source);
+    let mut index = 0;
+    let mut unresolved = false;
+    while index < source.len() {
+        let Some(relative_open) = source[index..].find('{') else {
+            break;
+        };
+        let open = index + relative_open;
+        let Some(close) = matching_brace(&source, open) else {
+            break;
+        };
+        let header = source[index..open]
+            .rsplit_once(';')
+            .map_or(&source[index..open], |(_, selector)| selector)
+            .trim();
+        let body = &source[open + 1..close];
+        let signals = classify_css_declarations(body);
+        if header.starts_with('@') {
+            let supported_tailwind_block =
+                header.starts_with("@theme") || header.starts_with("@utility");
+            if !supported_tailwind_block && !signals.is_empty() {
+                unresolved = true;
+            }
+        } else if !signals.is_empty() {
+            for selector in header.split(',').map(str::trim) {
+                if let Some(name) = simple_css_class_name(selector) {
+                    classes
+                        .entry(name.to_owned())
+                        .or_default()
+                        .extend(signals.clone());
+                } else if selector.contains('.') {
+                    unresolved = true;
+                }
+            }
+        }
+        index = close + 1;
+    }
+    unresolved
+}
+
+fn simple_css_class_name(selector: &str) -> Option<&str> {
+    let name = selector.strip_prefix('.')?;
+    (!name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
+    .then_some(name)
+}
+
+fn strip_css_comments(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut remainder = source;
+    while let Some(start) = remainder.find("/*") {
+        output.push_str(&remainder[..start]);
+        let Some(end) = remainder[start + 2..].find("*/") else {
+            return output;
+        };
+        output.push(' ');
+        remainder = &remainder[start + 2 + end + 2..];
+    }
+    output.push_str(remainder);
+    output
 }
 
 fn css_custom_properties(source: &str) -> Vec<(String, String)> {
@@ -707,4 +787,102 @@ fn discover_css_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), 
         }
     }
     Ok(())
+}
+
+fn discover_stylesheet_entrypoints(
+    root: &Path,
+    max_file_bytes: u64,
+) -> Result<BTreeSet<PathBuf>, String> {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        max_file_bytes: u64,
+        paths: &mut BTreeSet<PathBuf>,
+    ) -> Result<(), String> {
+        for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let file_type = entry.file_type().map_err(|error| error.to_string())?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                let ignored = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        matches!(
+                            name,
+                            ".git"
+                                | ".ai-ui-slop"
+                                | "node_modules"
+                                | "target"
+                                | "dist"
+                                | "build"
+                                | ".next"
+                        )
+                    });
+                if !ignored {
+                    visit(root, &path, max_file_bytes, paths)?;
+                }
+                continue;
+            }
+            if !matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("html" | "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs")
+            ) {
+                continue;
+            }
+            if fs::metadata(&path).map_or(true, |metadata| metadata.len() > max_file_bytes) {
+                continue;
+            }
+            let Ok(source) = fs::read_to_string(&path) else {
+                continue;
+            };
+            for specifier in quoted_css_specifiers(&source) {
+                let specifier = specifier.split(['?', '#']).next().unwrap_or(&specifier);
+                let candidate = if let Some(absolute) = specifier.strip_prefix('/') {
+                    root.join(absolute)
+                } else {
+                    path.parent().unwrap_or(root).join(specifier)
+                };
+                if let Ok(canonical) = candidate.canonicalize()
+                    && canonical.starts_with(root)
+                    && canonical.is_file()
+                {
+                    paths.insert(canonical);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let mut paths = BTreeSet::new();
+    visit(root, root, max_file_bytes, &mut paths)?;
+    Ok(paths)
+}
+
+fn quoted_css_specifiers(source: &str) -> Vec<String> {
+    let mut specifiers = Vec::new();
+    let mut remainder = source;
+    while let Some((start, quote)) = remainder
+        .char_indices()
+        .find(|(_, character)| matches!(character, '"' | '\''))
+    {
+        let tail = &remainder[start + quote.len_utf8()..];
+        let Some(end) = tail.find(quote) else {
+            break;
+        };
+        let value = &tail[..end];
+        let without_suffix = value.split(['?', '#']).next().unwrap_or(value);
+        let prefix = remainder[..start].trim_end();
+        let is_static_reference = ["import", "from", "import(", "href="]
+            .into_iter()
+            .any(|marker| prefix.ends_with(marker));
+        if is_static_reference && without_suffix.ends_with(".css") {
+            specifiers.push(value.to_owned());
+        }
+        remainder = &tail[end + quote.len_utf8()..];
+    }
+    specifiers
 }

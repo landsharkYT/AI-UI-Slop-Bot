@@ -81,6 +81,11 @@ fn init_discovers_likely_frontend_workspaces_without_approving_house_style() {
     )
     .expect("storefront package");
     fs::write(
+        temporary.path().join("apps/storefront/src/main.tsx"),
+        "export function App(){return <main>Storefront</main>}",
+    )
+    .expect("storefront entrypoint");
+    fs::write(
         temporary.path().join("apps/admin/package.json"),
         r#"{"dependencies":{"next":"15.0.0","react":"19.0.0"}}"#,
     )

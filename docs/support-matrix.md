@@ -11,14 +11,15 @@ Status: Shot 7 V1 implementation complete; external validation pending.
 | Syntax mechanics | Oxc 0.142.0 |
 | Tailwind | Literal utilities, selected semantic arbitrary values, configured/manifest/lockfile major-version resolution, static v3 inspection, and bounded recursive v4 CSS-first discovery |
 | Inline styles | Literal and repository-local shared static object values for supported decorative categories |
+| Plain CSS | Statically referenced scope-local stylesheets; simple class selectors and supported declarations share the signal model; conditional and compound signal-bearing selectors become explicit coverage loss |
 | Configuration | `ai-ui-slop.config.jsonc`, schema 1 |
 | Canonical report | JSON schema 6 and Markdown projection, including canonical resource usage |
 | Baseline | JSON schema 2 with semantic migration preview |
 | Rule pack | `1.0.0-beta.1`, nine executable rule paths |
 | Page Archetypes | Fourteen built-in IDs, `unknown`, and declarative custom definitions |
 | Static class composition | Literals, repository-local constants, static templates, finite conditionals, standard combinators, configured class helpers, CVA defaults/static selections/scalar-or-array compound variants, and bounded variant-condition families |
-| Repository discovery | Checkout/Trusted Policy `.gitignore`, built-in exclusions, internal symlink deduplication, external-symlink diagnostics, UTF-8 BOM and CRLF |
-| Repository graph | Relative imports, inherited tsconfig path aliases, workspace package exports, wildcard/named barrels and cycles, literal dynamic/lazy imports, rendered components, routes, archetypes, approved primitives, and file-level Finding impact sites |
+| Repository discovery | Checkout/Trusted Policy `.gitignore`, built-in exclusions, internal symlink deduplication, external-symlink diagnostics, UTF-8 BOM and CRLF; `init` uses React plus browser-entrypoint evidence and bounded nested discovery |
+| Repository graph | Oxc-contextual JSX render edges, relative imports, inherited tsconfig path aliases, workspace package exports, wildcard/named barrels and cycles, literal dynamic/lazy imports, routes, archetypes, approved primitives, and file-level Finding impact sites |
 | Route adapters | Next App Router, Next Pages Router, static React Router declarations, configured overrides |
 | Resource control | Source/file/graph/AST/reachable-state/diagnostic/output ceilings, accounted parser memory, cooperative wall time, and cancellation |
 | GitHub integration | Composite Action supporting protected Trusted Policy, cooperative wall time, Linux outer-memory control, and a separately installed integrity-verified native binary |

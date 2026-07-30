@@ -354,7 +354,7 @@ fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
 
 fn discover_scope_drafts(root: &Path) -> Result<Vec<Value>, (u8, String)> {
     fn visit(root: &Path, directory: &Path, depth: usize, roots: &mut Vec<String>) {
-        if depth > 3 {
+        if depth > 16 {
             return;
         }
         let package = directory.join("package.json");
@@ -446,10 +446,29 @@ fn frontend_package(directory: &Path, package: &Path) -> bool {
                 })
             })
     });
-    has_frontend_dependency
-        || ["src", "app", "pages"]
+    if !has_frontend_dependency {
+        return false;
+    }
+    [
+        "index.html",
+        "vite.config.js",
+        "vite.config.mjs",
+        "vite.config.ts",
+        "next.config.js",
+        "next.config.mjs",
+        "next.config.ts",
+    ]
+    .into_iter()
+    .any(|name| directory.join(name).is_file())
+        || ["app", "pages"]
             .into_iter()
             .any(|name| directory.join(name).is_dir())
+        || ["js", "jsx", "ts", "tsx"].into_iter().any(|extension| {
+            directory
+                .join("src/main")
+                .with_extension(extension)
+                .is_file()
+        })
 }
 
 fn run_config(arguments: &[String]) -> Result<(), (u8, String)> {

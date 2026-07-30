@@ -25,8 +25,16 @@ scripts/measure-command.py \
   "$evidence_directory/report.json" \
   "$evidence_directory/stderr.txt" \
   -- "$binary" scan "$fixture_directory" --format json --progress never
-elapsed_ms="$(jq -r '.elapsedMs' "$evidence_directory/metrics.json")"
-peak_rss_kib="$(jq -r '.peakRssKiB' "$evidence_directory/metrics.json")"
+read -r elapsed_ms peak_rss_kib < <(
+  python3 -c '
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as metrics_file:
+    metrics = json.load(metrics_file)
+print(metrics["elapsedMs"], metrics.get("peakRssKiB") or 0)
+' "$evidence_directory/metrics.json"
+)
 
 printf '{"fixtureVersion":"1","fileCount":%s,"lineCount":%s,"elapsedMs":%s,"peakRssKiB":%s,"binary":"%s"}\n' \
   "$file_count" "$line_count" "$elapsed_ms" "${peak_rss_kib:-0}" "$binary" \

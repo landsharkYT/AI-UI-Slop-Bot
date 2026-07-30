@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at the **Shot 7 V1 implementation candidate** (`0.7.0`): the locally implementable product and hardening seams are represented end to end. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
+The repository is at the **post-Shot 7 V1 implementation candidate** (`0.7.1`): the locally implementable product and hardening seams are represented end to end, followed by a real-repository accuracy pass. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
 
 ## Run it
 

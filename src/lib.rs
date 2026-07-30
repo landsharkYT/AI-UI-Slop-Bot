@@ -1320,17 +1320,18 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
                 Expression::CallExpression(call) => {
                     if let Some(states) = parse_cva_binding(call) {
                         self.cva_bindings.insert(name.to_string(), states);
-                    } else if call
-                        .arguments
-                        .first()
-                        .and_then(|argument| argument.as_expression())
-                        .is_some_and(|argument| {
-                            matches!(
-                                argument,
-                                Expression::ArrowFunctionExpression(_)
-                                    | Expression::FunctionExpression(_)
-                            )
-                        })
+                    } else if is_component_name(name.as_str())
+                        && call
+                            .arguments
+                            .first()
+                            .and_then(|argument| argument.as_expression())
+                            .is_some_and(|argument| {
+                                matches!(
+                                    argument,
+                                    Expression::ArrowFunctionExpression(_)
+                                        | Expression::FunctionExpression(_)
+                                )
+                            })
                         && expression_static_name(&call.callee)
                             .is_some_and(|callee| !self.component_wrappers.contains(&callee))
                     {
@@ -1782,7 +1783,7 @@ pub fn scan_with_progress(
 
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
-        schema_version: "0.7.0".to_owned(),
+        schema_version: env!("CARGO_PKG_VERSION").to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
@@ -2578,7 +2579,7 @@ fn evaluate_rhythm(
         if matching.len() >= 5
             && denominator > 0
             && matching.len() * 100 >= denominator * 80
-            && roles.len() >= 2
+            && roles.len() >= 3
         {
             let score =
                 (42 + matching.len().saturating_sub(5) * 4 + usize::from(roles.len() >= 3) * 10)

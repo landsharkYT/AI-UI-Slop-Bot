@@ -6,6 +6,15 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use oxc_allocator::Allocator;
+use oxc_ast::ast::{ImportDeclaration, ImportDeclarationSpecifier, JSXElement};
+use oxc_ast_visit::{
+    Visit,
+    walk::{walk_import_declaration, walk_jsx_element},
+};
+use oxc_parser::Parser;
+use oxc_span::SourceType;
+
 use crate::{AnalyzedOwner, IgnoreRule, ignored_path, load_ignore_rules};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,7 +173,9 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
             }
         }
 
-        for rendered_name in extract_rendered_components(&source) {
+        for rendered_name in
+            extract_rendered_components(file, &source, request.root, &module_resolution)
+        {
             candidate_edges += 1;
             let targets = owners_by_name.get(&rendered_name);
             let target =
@@ -358,26 +369,84 @@ fn first_quoted(source: &str) -> Option<String> {
     Some(tail[..end].to_owned())
 }
 
-fn extract_rendered_components(source: &str) -> Vec<String> {
-    let bytes = source.as_bytes();
-    let mut names = BTreeSet::new();
-    let mut index = 0;
-    while index + 1 < bytes.len() {
-        if bytes[index] == b'<' && bytes[index + 1].is_ascii_uppercase() {
-            let start = index + 1;
-            let mut end = start + 1;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || matches!(bytes[end], b'_' | b'$'))
-            {
-                end += 1;
-            }
-            names.insert(source[start..end].to_owned());
-            index = end;
-        } else {
-            index += 1;
-        }
+fn extract_rendered_components(
+    path: &Path,
+    source: &str,
+    repository_root: &Path,
+    module_resolution: &ModuleResolution,
+) -> Vec<String> {
+    let Ok(source_type) = SourceType::from_path(path) else {
+        return Vec::new();
+    };
+    let allocator = Allocator::default();
+    let parsed = Parser::new(&allocator, source, source_type.with_jsx(true)).parse();
+    if !parsed.diagnostics.is_empty() {
+        return Vec::new();
     }
-    names.into_iter().collect()
+    let local_bare_imports = extract_module_specifiers(source)
+        .into_iter()
+        .filter(|module| {
+            !module.dynamic
+                && !module.specifier.starts_with('.')
+                && module_resolution
+                    .resolve(repository_root, &module.specifier)
+                    .is_some()
+        })
+        .map(|module| module.specifier)
+        .collect();
+    let mut visitor = RenderedComponentVisitor {
+        names: BTreeSet::new(),
+        external_imports: BTreeSet::new(),
+        local_bare_imports,
+    };
+    visitor.visit_program(&parsed.program);
+    visitor
+        .names
+        .difference(&visitor.external_imports)
+        .cloned()
+        .collect()
+}
+
+struct RenderedComponentVisitor {
+    names: BTreeSet<String>,
+    external_imports: BTreeSet<String>,
+    local_bare_imports: BTreeSet<String>,
+}
+
+impl<'a> Visit<'a> for RenderedComponentVisitor {
+    fn visit_import_declaration(&mut self, declaration: &ImportDeclaration<'a>) {
+        let source = declaration.source.value.as_str();
+        if !source.starts_with('.')
+            && !source.starts_with('/')
+            && !self.local_bare_imports.contains(source)
+            && let Some(specifiers) = &declaration.specifiers
+        {
+            for specifier in specifiers {
+                let local = match specifier {
+                    ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
+                        specifier.local.name.as_str()
+                    }
+                    ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
+                        specifier.local.name.as_str()
+                    }
+                    ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
+                        specifier.local.name.as_str()
+                    }
+                };
+                self.external_imports.insert(local.to_owned());
+            }
+        }
+        walk_import_declaration(self, declaration);
+    }
+
+    fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
+        if let Some(name) = element.opening_element.name.get_identifier_name()
+            && name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+        {
+            self.names.insert(name.to_string());
+        }
+        walk_jsx_element(self, element);
+    }
 }
 
 fn resolve_module_candidate(base_directory: &Path, specifier: &str) -> Option<PathBuf> {
