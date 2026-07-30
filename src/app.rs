@@ -8,7 +8,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnalyzedOwner, Finding, ProgressEvent, RepositoryGraph, ScanPolicy, ScanRequest,
+    AnalysisResourceUsage, AnalyzedOwner, CancellationToken, Finding, ProgressEvent,
+    RepositoryGraph, ScanPolicy, ScanRequest,
     graph::{GraphRequest, build_repository_graph},
     ignored_path, load_ignore_rules, page_archetype_catalog,
     policy::{
@@ -18,7 +19,7 @@ use crate::{
     style::{StyleAdapterReport, StyleRequest, inspect as inspect_style},
 };
 
-pub const REPORT_SCHEMA_VERSION: &str = "5";
+pub const REPORT_SCHEMA_VERSION: &str = "6";
 pub const RULE_PACK_VERSION: &str = "1.0.0-beta.1";
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,8 @@ pub struct RepositoryRequest {
     pub root: PathBuf,
     pub trusted_policy_root: Option<PathBuf>,
     pub jobs: usize,
+    pub cancellation: CancellationToken,
+    pub max_wall_time_ms: u64,
 }
 
 impl RepositoryRequest {
@@ -35,6 +38,8 @@ impl RepositoryRequest {
             root: root.into(),
             trusted_policy_root: None,
             jobs: std::thread::available_parallelism().map_or(1, usize::from),
+            cancellation: CancellationToken::new(),
+            max_wall_time_ms: 0,
         }
     }
 
@@ -49,18 +54,44 @@ impl RepositoryRequest {
         self.jobs = jobs.max(1);
         self
     }
+
+    #[must_use]
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_wall_time_ms(mut self, milliseconds: u64) -> Self {
+        self.max_wall_time_ms = milliseconds;
+        self
+    }
 }
 
 #[derive(Debug)]
 pub struct RepositoryError {
     message: String,
+    cancelled: bool,
 }
 
 impl RepositoryError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            cancelled: false,
         }
+    }
+
+    fn cancelled() -> Self {
+        Self {
+            message: "scan cancelled".to_owned(),
+            cancelled: true,
+        }
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
     }
 }
 
@@ -110,6 +141,7 @@ pub struct ScopeReport {
     pub finding_impacts: Vec<FindingImpact>,
     pub repository_profile: RepositoryProfile,
     pub diagnostics: Vec<ScopeDiagnostic>,
+    pub resource_usage: AnalysisResourceUsage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +224,9 @@ pub fn analyze_repository_with_progress(
     request: RepositoryRequest,
     mut progress: impl FnMut(ProgressEvent),
 ) -> Result<CanonicalReport, RepositoryError> {
+    if request.cancellation.is_cancelled() {
+        return Err(RepositoryError::cancelled());
+    }
     let root = request.root.canonicalize().map_err(|error| {
         RepositoryError::new(format!("cannot open {}: {error}", request.root.display()))
     })?;
@@ -231,6 +266,8 @@ pub fn analyze_repository_with_progress(
                 &policy_root.join(&effective.relative_root),
                 policy_source,
                 policy_changed,
+                &request.cancellation,
+                request.max_wall_time_ms,
                 &mut scoped_progress,
             )?);
         }
@@ -245,10 +282,15 @@ pub fn analyze_repository_with_progress(
                 let next = &next;
                 let effective_scopes = &effective_scopes;
                 let policy_root = &policy_root;
+                let cancellation = &request.cancellation;
+                let max_wall_time_ms = request.max_wall_time_ms;
                 handles.push(thread_scope.spawn(move || {
                     let mut results = Vec::new();
                     loop {
                         let index = next.fetch_add(1, Ordering::Relaxed);
+                        if cancellation.is_cancelled() {
+                            break;
+                        }
                         let Some(effective) = effective_scopes.get(index) else {
                             break;
                         };
@@ -259,6 +301,8 @@ pub fn analyze_repository_with_progress(
                                 &policy_root.join(&effective.relative_root),
                                 policy_source,
                                 policy_changed,
+                                cancellation,
+                                max_wall_time_ms,
                                 &mut |_| {},
                             ),
                         ));
@@ -292,6 +336,9 @@ pub fn analyze_repository_with_progress(
         }
         scopes
     };
+    if request.cancellation.is_cancelled() {
+        return Err(RepositoryError::cancelled());
+    }
     scopes.sort_by(|left, right| left.id.cmp(&right.id));
     let finding_count = scopes.iter().map(|scope| scope.findings.len()).sum();
     let outcome = if scopes.iter().any(|scope| scope.status == "incomplete") {
@@ -320,16 +367,25 @@ fn analyze_scope(
     ignore_policy_root: &Path,
     policy_source: &str,
     policy_changed: bool,
+    cancellation: &CancellationToken,
+    max_wall_time_ms: u64,
     progress: &mut impl FnMut(ProgressEvent),
 ) -> Result<ScopeReport, RepositoryError> {
+    if cancellation.is_cancelled() {
+        return Err(RepositoryError::cancelled());
+    }
     let style_inspection = inspect_style(StyleRequest {
         root: &effective.absolute_root,
         configured_version: &effective.tailwind_version,
         max_file_bytes: effective.resources.max_auxiliary_file_bytes,
         max_total_bytes: effective.resources.max_auxiliary_bytes,
         max_import_edges: effective.resources.max_style_import_edges,
+        max_import_depth: effective.resources.max_config_import_depth,
     })
     .map_err(RepositoryError::new)?;
+    if cancellation.is_cancelled() {
+        return Err(RepositoryError::cancelled());
+    }
     let style_adapter = style_inspection.report;
     let active_suppressions = effective
         .suppressions
@@ -423,11 +479,22 @@ fn analyze_scope(
         max_source_bytes: effective.resources.max_source_bytes,
         max_file_bytes: effective.resources.max_file_bytes,
         max_diagnostics: effective.resources.max_diagnostics,
+        max_diagnostics_per_reason: effective.resources.max_diagnostics_per_reason,
+        max_ast_nodes: effective.resources.max_ast_nodes,
+        max_analysis_bytes: effective.resources.max_analysis_bytes,
+        max_directory_depth: effective.resources.max_directory_depth,
+        max_wall_time_ms,
         max_reachable_states: effective.resources.max_reachable_states,
         semantic_class_signals: style_inspection.semantic_utilities,
     };
-    let scan_report = scan_with_progress(request, progress)
-        .map_err(|error| RepositoryError::new(error.to_string()))?;
+    request.cancellation = cancellation.clone();
+    let scan_report = scan_with_progress(request, progress).map_err(|error| {
+        if error.is_cancelled() {
+            RepositoryError::cancelled()
+        } else {
+            RepositoryError::new(error.to_string())
+        }
+    })?;
     for suppression in active_suppressions {
         let matched = scan_report.findings.iter().any(|finding| {
             finding.rule_id == suppression.rule_id
@@ -467,6 +534,9 @@ fn analyze_scope(
         &effective.custom_archetypes,
         &effective.route_overrides,
     )?;
+    if cancellation.is_cancelled() {
+        return Err(RepositoryError::cancelled());
+    }
     let graph_routes = routes
         .iter()
         .map(|route| {
@@ -496,6 +566,9 @@ fn analyze_scope(
         max_edges: effective.resources.max_graph_edges,
     })
     .map_err(RepositoryError::new)?;
+    if cancellation.is_cancelled() {
+        return Err(RepositoryError::cancelled());
+    }
     let ownership_losses = scan_report
         .coverage
         .unresolved
@@ -612,6 +685,8 @@ fn analyze_scope(
     } else {
         "incomplete"
     };
+    let mut resource_usage = scan_report.resource_usage;
+    resource_usage.diagnostics_emitted = diagnostics.len() as u64;
     Ok(ScopeReport {
         id: effective.id.clone(),
         root: effective.relative_root.clone(),
@@ -627,6 +702,7 @@ fn analyze_scope(
         finding_impacts,
         repository_profile,
         diagnostics,
+        resource_usage,
     })
 }
 

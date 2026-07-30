@@ -8,10 +8,10 @@ use std::{
 };
 
 use ai_ui_slop::{
-    BaselineArtifact, BaselineMigrationPreview, ProgressEvent, RepositoryRequest, accept_candidate,
-    analyze_repository, analyze_repository_with_progress, compare_baseline, create_candidate,
-    page_archetype_catalog, policy, preview_baseline_migration, render_refactoring_brief,
-    rule_catalog,
+    BaselineArtifact, BaselineMigrationPreview, CancellationToken, ProgressEvent,
+    RepositoryRequest, accept_candidate, analyze_repository, analyze_repository_with_progress,
+    compare_baseline, create_candidate, page_archetype_catalog, policy, preview_baseline_migration,
+    render_refactoring_brief, rule_catalog,
 };
 use serde_json::{Value, json};
 
@@ -35,6 +35,7 @@ struct ScanOptions {
     progress: ProgressMode,
     trusted_policy_root: Option<PathBuf>,
     jobs: usize,
+    max_wall_time_seconds: Option<u64>,
 }
 
 fn main() -> ExitCode {
@@ -74,6 +75,14 @@ fn run() -> Result<(), (u8, String)> {
 }
 
 fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
+    let cancellation = CancellationToken::new();
+    let handler_token = cancellation.clone();
+    ctrlc::set_handler(move || {
+        if handler_token.cancel() > 1 {
+            std::process::exit(130);
+        }
+    })
+    .map_err(|error| (4, format!("could not install interrupt handler: {error}")))?;
     let repository_root = options.root.canonicalize().map_err(|error| {
         (
             2,
@@ -88,12 +97,31 @@ fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
         request = request.with_trusted_policy_root(trusted_policy_root);
     }
     request = request.with_jobs(options.jobs);
+    request = request.with_cancellation(cancellation.clone());
+    if let Some(seconds) = options.max_wall_time_seconds {
+        request = request.with_max_wall_time_ms(seconds.saturating_mul(1_000));
+    }
     let mut report = analyze_repository_with_progress(request, |event| {
         if show_progress && progress_renderer.should_render(&event) {
             render_progress(&event, started);
         }
     })
-    .map_err(|error| (2, error.to_string()))?;
+    .map_err(|error| {
+        if error.is_cancelled() {
+            (
+                130,
+                "scan cancelled; no canonical artifacts were written".to_owned(),
+            )
+        } else {
+            (2, error.to_string())
+        }
+    })?;
+    if cancellation.is_cancelled() {
+        return Err((
+            130,
+            "scan cancelled; no canonical artifacts were written".to_owned(),
+        ));
+    }
     let policy_root = options
         .trusted_policy_root
         .as_deref()
@@ -150,6 +178,12 @@ fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
     };
     let json = serialize_pretty(&report)?;
     let markdown = render_refactoring_brief(&report);
+    if cancellation.is_cancelled() {
+        return Err((
+            130,
+            "scan cancelled; no canonical artifacts were written".to_owned(),
+        ));
+    }
     if json.len() as u64 > config.resources.max_json_bytes {
         return Err((
             3,
@@ -184,6 +218,13 @@ fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
         GeneratedKind::Json("ai-ui-slop.canonical-report"),
         true,
     )?;
+    if cancellation.is_cancelled() {
+        let _ = fs::remove_file(reports.join("report.json"));
+        return Err((
+            130,
+            "scan cancelled; incomplete report artifacts were removed".to_owned(),
+        ));
+    }
     if show_progress {
         render_progress(
             &report_progress(95, 1, "canonical JSON committed atomically"),
@@ -196,6 +237,14 @@ fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
         GeneratedKind::Markdown,
         true,
     )?;
+    if cancellation.is_cancelled() {
+        let _ = fs::remove_file(reports.join("report.json"));
+        let _ = fs::remove_file(reports.join("refactoring-brief.md"));
+        return Err((
+            130,
+            "scan cancelled; incomplete report artifacts were removed".to_owned(),
+        ));
+    }
     if show_progress {
         render_progress(
             &report_progress(100, 2, "report artifacts validated"),
@@ -270,6 +319,11 @@ fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
     "maxReachableStates": 256,
     "maxScopes": 64,
     "maxDiagnostics": 10000,
+    "maxDiagnosticsPerReason": 1000,
+    "maxAstNodes": 2000000,
+    "maxAnalysisBytes": 1073741824,
+    "maxDirectoryDepth": 128,
+    "maxConfigImportDepth": 64,
     "maxJsonBytes": 268435456,
     "maxMarkdownBytes": 67108864
   }}
@@ -725,7 +779,7 @@ fn run_schema(arguments: &[String]) -> Result<(), (u8, String)> {
 
 fn run_version() -> Result<(), (u8, String)> {
     println!(
-        "ai-ui-slop {}\nreport-schema 2\nconfig-schema 1\nbaseline-schema 2\nrule-pack 1.0.0-beta.1\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
+        "ai-ui-slop {}\nreport-schema 6\nconfig-schema 1\nbaseline-schema 2\nrule-pack 1.0.0-beta.1\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
         env!("CARGO_PKG_VERSION")
     );
     Ok(())
@@ -740,6 +794,7 @@ fn parse_scan_options(
     let mut progress = ProgressMode::Auto;
     let mut trusted_policy_root = None;
     let mut jobs = std::thread::available_parallelism().map_or(1, usize::from);
+    let mut max_wall_time_seconds = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--format" => {
@@ -776,6 +831,26 @@ fn parse_scan_options(
                     .filter(|jobs| *jobs > 0)
                     .ok_or_else(|| (2, "`--jobs` requires a positive integer".to_owned()))?;
             }
+            "--max-wall-time-seconds" => {
+                let value = arguments.next().ok_or_else(|| {
+                    (
+                        2,
+                        "`--max-wall-time-seconds` requires a positive integer".to_owned(),
+                    )
+                })?;
+                max_wall_time_seconds = Some(
+                    value
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|v| *v > 0)
+                        .ok_or_else(|| {
+                            (
+                                2,
+                                "`--max-wall-time-seconds` requires a positive integer".to_owned(),
+                            )
+                        })?,
+                );
+            }
             value if value.starts_with('-') => {
                 return Err((2, format!("unknown scan option `{value}`")));
             }
@@ -789,6 +864,7 @@ fn parse_scan_options(
         progress,
         trusted_policy_root,
         jobs,
+        max_wall_time_seconds,
     })
 }
 

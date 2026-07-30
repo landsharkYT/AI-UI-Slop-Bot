@@ -1,18 +1,18 @@
 # V1 Alpha Support Matrix
 
-Status: Shot 6 implementation candidate; hosted release qualification pending.
+Status: Shot 7 V1 implementation complete; external validation pending.
 
 | Surface | Alpha support |
 | --- | --- |
 | Scanner target | Native Rust binary |
 | Verified development target | Linux x86-64, glibc |
-| Rust toolchain used for Shot 6 | 1.96.0 |
+| Rust toolchain used for Shot 7 | 1.96.0 |
 | React source | Configured `.js`, `.jsx`, `.ts`, and `.tsx`; named functions/arrows, transparent wrapper aliases, and `Component`/`PureComponent` classes |
 | Syntax mechanics | Oxc 0.142.0 |
 | Tailwind | Literal utilities, selected semantic arbitrary values, configured/manifest/lockfile major-version resolution, static v3 inspection, and bounded recursive v4 CSS-first discovery |
 | Inline styles | Literal and repository-local shared static object values for supported decorative categories |
 | Configuration | `ai-ui-slop.config.jsonc`, schema 1 |
-| Canonical report | JSON schema 5 and Markdown projection |
+| Canonical report | JSON schema 6 and Markdown projection, including canonical resource usage |
 | Baseline | JSON schema 2 with semantic migration preview |
 | Rule pack | `1.0.0-beta.1`, nine executable rule paths |
 | Page Archetypes | Fourteen built-in IDs, `unknown`, and declarative custom definitions |
@@ -20,7 +20,8 @@ Status: Shot 6 implementation candidate; hosted release qualification pending.
 | Repository discovery | Checkout/Trusted Policy `.gitignore`, built-in exclusions, internal symlink deduplication, external-symlink diagnostics, UTF-8 BOM and CRLF |
 | Repository graph | Relative imports, inherited tsconfig path aliases, workspace package exports, wildcard/named barrels and cycles, literal dynamic/lazy imports, rendered components, routes, archetypes, approved primitives, and file-level Finding impact sites |
 | Route adapters | Next App Router, Next Pages Router, static React Router declarations, configured overrides |
-| GitHub integration | Composite Action supporting protected Trusted Policy and requiring a separately installed, integrity-verified native binary |
+| Resource control | Source/file/graph/AST/reachable-state/diagnostic/output ceilings, accounted parser memory, cooperative wall time, and cancellation |
+| GitHub integration | Composite Action supporting protected Trusted Policy, cooperative wall time, Linux outer-memory control, and a separately installed integrity-verified native binary |
 | Release automation | Five native target jobs, digest manifest, SPDX SBOM, GitHub attestation |
 
 Not yet qualified:
@@ -32,7 +33,6 @@ Not yet qualified:
 - full interpretation of Tailwind v3 theme values and v4 theme/custom-utility declarations as scanner signals;
 - exclusivity reasoning for container, feature-query, and repository-defined custom variants beyond light/dark and static data/ARIA assignments;
 - symbol-level re-export provenance and component-level rather than file-level primitive usage sites;
-- signal cancellation and allocator-accounted memory enforcement;
 - authenticated release assets verified from an actual hosted tag workflow; and
 - customer calibration or V1 release acceptance.
 

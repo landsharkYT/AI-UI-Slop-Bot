@@ -65,6 +65,11 @@ pub struct ResourcePolicy {
     pub max_reachable_states: usize,
     pub max_scopes: usize,
     pub max_diagnostics: usize,
+    pub max_diagnostics_per_reason: usize,
+    pub max_ast_nodes: usize,
+    pub max_analysis_bytes: u64,
+    pub max_directory_depth: usize,
+    pub max_config_import_depth: usize,
     pub max_json_bytes: u64,
     pub max_markdown_bytes: u64,
 }
@@ -82,6 +87,11 @@ impl Default for ResourcePolicy {
             max_reachable_states: 256,
             max_scopes: 64,
             max_diagnostics: 10_000,
+            max_diagnostics_per_reason: 1_000,
+            max_ast_nodes: 2_000_000,
+            max_analysis_bytes: 1024 * 1024 * 1024,
+            max_directory_depth: 128,
+            max_config_import_depth: 64,
             max_json_bytes: 256 * 1024 * 1024,
             max_markdown_bytes: 64 * 1024 * 1024,
         }
@@ -274,6 +284,11 @@ fn validate_config(config: &ProjectConfig) -> Result<(), String> {
         || config.resources.max_reachable_states == 0
         || config.resources.max_scopes == 0
         || config.resources.max_diagnostics == 0
+        || config.resources.max_diagnostics_per_reason == 0
+        || config.resources.max_ast_nodes == 0
+        || config.resources.max_analysis_bytes == 0
+        || config.resources.max_directory_depth == 0
+        || config.resources.max_config_import_depth == 0
         || config.resources.max_json_bytes == 0
         || config.resources.max_markdown_bytes == 0
     {
@@ -284,6 +299,12 @@ fn validate_config(config: &ProjectConfig) -> Result<(), String> {
     }
     if config.resources.max_reachable_states > 4_096 {
         return Err("maxReachableStates must not exceed 4096".to_owned());
+    }
+    if config.resources.max_directory_depth > 128 {
+        return Err("maxDirectoryDepth must not exceed 128".to_owned());
+    }
+    if config.resources.max_config_import_depth > 64 {
+        return Err("maxConfigImportDepth must not exceed 64".to_owned());
     }
     if config.scopes.len() > config.resources.max_scopes {
         return Err(format!(

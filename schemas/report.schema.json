@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-ui-slop.dev/schema/report/5",
+  "$id": "https://ai-ui-slop.dev/schema/report/6",
   "title": "AI UI Slop Canonical Report",
   "type": "object",
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "artifactType": { "const": "ai-ui-slop.canonical-report" },
-    "schemaVersion": { "const": "5" },
+    "schemaVersion": { "const": "6" },
     "toolVersion": { "type": "string" },
     "rulePackVersion": { "type": "string" },
     "fingerprintAlgorithmVersion": { "type": "string" },
@@ -40,9 +40,22 @@
           "findings",
           "findingImpacts",
           "repositoryProfile",
-          "diagnostics"
+          "diagnostics",
+          "resourceUsage"
         ],
         "properties": {
+          "resourceUsage": {
+            "type": "object",
+            "required": ["sourceBytesRead", "parserArenaPeakBytes", "peakAccountedAnalysisBytes", "astNodesSeen", "diagnosticsEmitted"],
+            "properties": {
+              "sourceBytesRead": { "type": "integer", "minimum": 0 },
+              "parserArenaPeakBytes": { "type": "integer", "minimum": 0 },
+              "peakAccountedAnalysisBytes": { "type": "integer", "minimum": 0 },
+              "astNodesSeen": { "type": "integer", "minimum": 0 },
+              "diagnosticsEmitted": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          },
           "findingImpacts": {
             "type": "array",
             "items": {

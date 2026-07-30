@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at the **Shot 6 implementation candidate** (`0.6.0`): product breadth, principal hardening seams, bounded reachable-style semantics, and semantic repository ownership are represented end to end, but external calibration, hosted platform qualification, and final implementation gates are incomplete. It must not be presented as Validated MVP or Full V1.
+The repository is at the **Shot 7 V1 implementation candidate** (`0.7.0`): the locally implementable product and hardening seams are represented end to end. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
 
 ## Run it
 
@@ -35,6 +35,7 @@ ai-ui-slop init ./repo
 ai-ui-slop config validate ./repo --effective default
 ai-ui-slop scan ./repo --format json
 ai-ui-slop scan ./pull-request --trusted-policy-root ./protected-base --jobs 4
+ai-ui-slop scan ./repo --max-wall-time-seconds 600
 ai-ui-slop explain effect-stacking
 ai-ui-slop baseline create ./repo
 ai-ui-slop baseline accept ./repo --approver maintainer --rationale "Reviewed debt"
@@ -57,9 +58,9 @@ cargo fmt --check
 
 The public seam tests cover discovery and symlinks, reachable-state class composition, shared static styles, typed repository graphs and aliases, route adapters, Trusted Policy, resource ceilings, hostile filesystem and Markdown inputs, baseline migration and review metadata, parallel determinism, the nine rule paths, Page Archetypes, command lifecycles, progress, and report artifacts.
 
-## Candidate limits
+## Validation still required
 
-Shot 5 still leaves full Tailwind theme/custom-utility signal interpretation, array-valued and runtime CVA selections, complete symbolic condition constraints, deeper export and primitive-impact analysis, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 5](docs/shot-5.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
+Shot 7 completes the planned implementation passes. Full V1 validation still requires the committed reference-runner workloads, hosted release smoke tests, authenticated release assets, broader fuzz/mutation evidence, and blind customer calibration. See [Shot 7](docs/shot-7.md), its [local evidence](docs/evidence/SHOT7-LOCAL.md), and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
 
 ## License
 

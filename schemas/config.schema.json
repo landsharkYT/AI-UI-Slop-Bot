@@ -78,6 +78,11 @@
         "maxReachableStates": { "type": "integer", "minimum": 1, "maximum": 4096 },
         "maxScopes": { "type": "integer", "minimum": 1, "maximum": 64 },
         "maxDiagnostics": { "type": "integer", "minimum": 1 },
+        "maxDiagnosticsPerReason": { "type": "integer", "minimum": 1 },
+        "maxAstNodes": { "type": "integer", "minimum": 1 },
+        "maxAnalysisBytes": { "type": "integer", "minimum": 1 },
+        "maxDirectoryDepth": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "maxConfigImportDepth": { "type": "integer", "minimum": 1, "maximum": 64 },
         "maxJsonBytes": { "type": "integer", "minimum": 1 },
         "maxMarkdownBytes": { "type": "integer", "minimum": 1 }
       },

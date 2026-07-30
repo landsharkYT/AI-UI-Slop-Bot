@@ -26,6 +26,7 @@ pub(crate) struct StyleRequest<'a> {
     pub max_file_bytes: u64,
     pub max_total_bytes: u64,
     pub max_import_edges: usize,
+    pub max_import_depth: usize,
 }
 
 pub(crate) struct StyleInspection {
@@ -150,7 +151,7 @@ impl<'a> StyleAnalysis<'a> {
                         self.version.as_deref().unwrap_or("unknown")
                     ));
                 }
-                self.visit_css(path, Some(source))?;
+                self.visit_css(path, Some(source), 0)?;
             }
         }
         Ok(())
@@ -201,7 +202,20 @@ impl<'a> StyleAnalysis<'a> {
         fs::read_to_string(path).ok()
     }
 
-    fn visit_css(&mut self, path: PathBuf, source: Option<String>) -> Result<(), String> {
+    fn visit_css(
+        &mut self,
+        path: PathBuf,
+        source: Option<String>,
+        depth: usize,
+    ) -> Result<(), String> {
+        if depth > self.request.max_import_depth {
+            self.unresolved.insert(format!(
+                "{}: CSS import depth exhausted at maxConfigImportDepth={}",
+                self.relative(&path),
+                self.request.max_import_depth
+            ));
+            return Ok(());
+        }
         let canonical = path.canonicalize().unwrap_or(path.clone());
         if self.visited_css.contains(&canonical) {
             return Ok(());
@@ -297,7 +311,7 @@ impl<'a> StyleAnalysis<'a> {
                 ));
                 continue;
             }
-            self.visit_css(candidate, None)?;
+            self.visit_css(candidate, None, depth + 1)?;
         }
         self.visiting_css.remove(&canonical);
         self.visited_css.insert(canonical);

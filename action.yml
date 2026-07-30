@@ -13,6 +13,14 @@ inputs:
     description: Protected target-branch worktree containing policy and Reviewed Baseline.
     required: false
     default: ""
+  wall-time-seconds:
+    description: Cooperative scanner wall-time ceiling.
+    required: false
+    default: "600"
+  outer-memory-mib:
+    description: Linux process virtual-memory ceiling.
+    required: false
+    default: "1536"
 
 outputs:
   exit-code:
@@ -34,12 +42,18 @@ runs:
       env:
         AI_UI_SLOP_BINARY: ${{ inputs.binary-path }}
         AI_UI_SLOP_TRUSTED_POLICY: ${{ inputs.trusted-policy-path }}
+        AI_UI_SLOP_WALL_TIME: ${{ inputs.wall-time-seconds }}
+        AI_UI_SLOP_OUTER_MEMORY_MIB: ${{ inputs.outer-memory-mib }}
       run: |
-        set +e
-        scan_args=(scan "$GITHUB_WORKSPACE" --format terminal --progress auto)
+        set -euo pipefail
+        scan_args=(scan "$GITHUB_WORKSPACE" --format terminal --progress auto --max-wall-time-seconds "$AI_UI_SLOP_WALL_TIME")
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          ulimit -v "$((AI_UI_SLOP_OUTER_MEMORY_MIB * 1024))"
+        fi
         if [[ -n "$AI_UI_SLOP_TRUSTED_POLICY" ]]; then
           scan_args+=(--trusted-policy-root "$AI_UI_SLOP_TRUSTED_POLICY")
         fi
+        set +e
         "$AI_UI_SLOP_BINARY" "${scan_args[@]}"
         scan_status="$?"
         set -e

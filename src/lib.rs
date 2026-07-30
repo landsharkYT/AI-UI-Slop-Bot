@@ -3,6 +3,7 @@
 mod app;
 mod baseline;
 mod catalog;
+mod control;
 mod graph;
 pub mod policy;
 mod style;
@@ -22,6 +23,7 @@ pub use catalog::{
     PageArchetypeDefinition, RuleDefinition, page_archetype_catalog, rule_catalog,
     structural_signal_catalog,
 };
+pub use control::CancellationToken;
 pub use graph::{GraphEdge, GraphNode, RepositoryGraph};
 pub use style::StyleAdapterReport;
 
@@ -33,6 +35,7 @@ use std::{
 };
 
 use oxc_allocator::Allocator;
+use oxc_ast::AstKind;
 use oxc_ast::ast::{
     CallExpression, Class, Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXChild,
     JSXElement, JSXExpression, ObjectExpression, ObjectPropertyKind, TemplateLiteral,
@@ -57,6 +60,7 @@ pub struct ScanRequest {
     pub root: PathBuf,
     pub analysis_scope: String,
     pub policy: ScanPolicy,
+    pub cancellation: CancellationToken,
 }
 
 impl ScanRequest {
@@ -66,6 +70,7 @@ impl ScanRequest {
             root: root.into(),
             analysis_scope: "default".to_owned(),
             policy: ScanPolicy::default(),
+            cancellation: CancellationToken::new(),
         }
     }
 }
@@ -87,6 +92,11 @@ pub struct ScanPolicy {
     pub max_source_bytes: u64,
     pub max_file_bytes: u64,
     pub max_diagnostics: usize,
+    pub max_diagnostics_per_reason: usize,
+    pub max_ast_nodes: usize,
+    pub max_analysis_bytes: u64,
+    pub max_directory_depth: usize,
+    pub max_wall_time_ms: u64,
     pub max_reachable_states: usize,
     pub semantic_class_signals: BTreeMap<String, BTreeSet<String>>,
 }
@@ -115,6 +125,11 @@ impl Default for ScanPolicy {
             max_source_bytes: 512 * 1024 * 1024,
             max_file_bytes: 2 * 1024 * 1024,
             max_diagnostics: 10_000,
+            max_diagnostics_per_reason: 1_000,
+            max_ast_nodes: 2_000_000,
+            max_analysis_bytes: 1024 * 1024 * 1024,
+            max_directory_depth: 128,
+            max_wall_time_ms: 0,
             max_reachable_states: 256,
             semantic_class_signals: BTreeMap::new(),
         }
@@ -124,13 +139,27 @@ impl Default for ScanPolicy {
 #[derive(Debug)]
 pub struct ScanError {
     message: String,
+    cancelled: bool,
 }
 
 impl ScanError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            cancelled: false,
         }
+    }
+
+    fn cancelled() -> Self {
+        Self {
+            message: "scan cancelled".to_owned(),
+            cancelled: true,
+        }
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
     }
 }
 
@@ -150,6 +179,17 @@ pub struct ScanReport {
     pub findings: Vec<Finding>,
     pub owners: Vec<AnalyzedOwner>,
     pub coverage: Coverage,
+    pub resource_usage: AnalysisResourceUsage,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisResourceUsage {
+    pub source_bytes_read: u64,
+    pub parser_arena_peak_bytes: u64,
+    pub peak_accounted_analysis_bytes: u64,
+    pub ast_nodes_seen: u64,
+    pub diagnostics_emitted: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1382,6 +1422,11 @@ pub fn scan_with_progress(
     request: ScanRequest,
     mut progress: impl FnMut(ProgressEvent),
 ) -> Result<ScanReport, ScanError> {
+    let started = std::time::Instant::now();
+    let mut resource_usage = AnalysisResourceUsage::default();
+    if request.cancellation.is_cancelled() {
+        return Err(ScanError::cancelled());
+    }
     emit_progress(
         &mut progress,
         "discovering",
@@ -1412,6 +1457,8 @@ pub fn scan_with_progress(
         request.policy.max_source_bytes,
         request.policy.max_file_bytes,
         &request.policy.jsx_extensions,
+        request.policy.max_directory_depth,
+        &request.cancellation,
     )?;
     emit_progress(
         &mut progress,
@@ -1432,6 +1479,22 @@ pub fn scan_with_progress(
 
     let file_total = discovery.files.len();
     for (index, file) in discovery.files.into_iter().enumerate() {
+        if request.cancellation.is_cancelled() {
+            return Err(ScanError::cancelled());
+        }
+        if request.policy.max_wall_time_ms > 0
+            && started.elapsed().as_millis() > u128::from(request.policy.max_wall_time_ms)
+        {
+            coverage.unresolved.push(CoverageIssue {
+                path: ".".to_owned(),
+                reason: "wall-time-budget".to_owned(),
+                detail: format!(
+                    "analysis exceeded maxWallTimeMs={}",
+                    request.policy.max_wall_time_ms
+                ),
+            });
+            break;
+        }
         let relative = normalize_path(&root, &file);
         let file_start = file_work_units(index, 0, file_total);
         let file_parsed = file_work_units(index, 1, file_total);
@@ -1465,6 +1528,9 @@ pub fn scan_with_progress(
                 continue;
             }
         };
+        resource_usage.source_bytes_read = resource_usage
+            .source_bytes_read
+            .saturating_add(source.len() as u64);
         let source_type = SourceType::from_path(&file)
             .map_err(|error| {
                 ScanError::new(format!(
@@ -1475,6 +1541,23 @@ pub fn scan_with_progress(
             .with_jsx(true);
         let allocator = Allocator::default();
         let parsed = Parser::new(&allocator, &source, source_type).parse();
+        let arena_bytes = allocator.used_bytes() as u64;
+        resource_usage.parser_arena_peak_bytes =
+            resource_usage.parser_arena_peak_bytes.max(arena_bytes);
+        let accounted = resource_usage.source_bytes_read.saturating_add(arena_bytes);
+        resource_usage.peak_accounted_analysis_bytes =
+            resource_usage.peak_accounted_analysis_bytes.max(accounted);
+        if accounted > request.policy.max_analysis_bytes {
+            coverage.unresolved.push(CoverageIssue {
+                path: relative,
+                reason: "analysis-memory-budget".to_owned(),
+                detail: format!(
+                    "accounted analysis memory {accounted} exceeded maxAnalysisBytes={}",
+                    request.policy.max_analysis_bytes
+                ),
+            });
+            break;
+        }
         if !parsed.diagnostics.is_empty() {
             coverage.unresolved.push(CoverageIssue {
                 path: relative.clone(),
@@ -1490,6 +1573,22 @@ pub fn scan_with_progress(
                 coverage.unresolved.len(),
                 "Oxc reported a parse failure",
             );
+            continue;
+        }
+        let mut node_counter = AstNodeCounter::default();
+        node_counter.visit_program(&parsed.program);
+        resource_usage.ast_nodes_seen = resource_usage
+            .ast_nodes_seen
+            .saturating_add(node_counter.count);
+        if node_counter.count > request.policy.max_ast_nodes as u64 {
+            coverage.unresolved.push(CoverageIssue {
+                path: relative,
+                reason: "ast-node-budget".to_owned(),
+                detail: format!(
+                    "{} AST nodes exceeded maxAstNodes={}",
+                    node_counter.count, request.policy.max_ast_nodes
+                ),
+            });
             continue;
         }
         emit_progress(
@@ -1660,6 +1759,10 @@ pub fn scan_with_progress(
         .map(|(path, owner)| AnalyzedOwner { path, owner })
         .collect();
 
+    truncate_diagnostics_per_reason(
+        &mut coverage.unresolved,
+        request.policy.max_diagnostics_per_reason,
+    );
     if coverage.unresolved.len() > request.policy.max_diagnostics {
         let omitted = coverage
             .unresolved
@@ -1675,15 +1778,52 @@ pub fn scan_with_progress(
             ),
         });
     }
+    resource_usage.diagnostics_emitted = coverage.unresolved.len() as u64;
 
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
-        schema_version: "0.6.0".to_owned(),
+        schema_version: "0.7.0".to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
         coverage,
+        resource_usage,
     })
+}
+
+#[derive(Default)]
+struct AstNodeCounter {
+    count: u64,
+}
+
+impl<'a> Visit<'a> for AstNodeCounter {
+    fn enter_node(&mut self, _kind: AstKind<'a>) {
+        self.count = self.count.saturating_add(1);
+    }
+}
+
+fn truncate_diagnostics_per_reason(issues: &mut Vec<CoverageIssue>, maximum: usize) {
+    let mut emitted = BTreeMap::<String, usize>::new();
+    let mut omitted = BTreeMap::<String, usize>::new();
+    issues.retain(|issue| {
+        let count = emitted.entry(issue.reason.clone()).or_default();
+        if *count < maximum {
+            *count += 1;
+            true
+        } else {
+            *omitted.entry(issue.reason.clone()).or_default() += 1;
+            false
+        }
+    });
+    for (reason, count) in omitted {
+        issues.push(CoverageIssue {
+            path: ".".to_owned(),
+            reason: "diagnostic-truncation".to_owned(),
+            detail: format!(
+                "`{reason}` omitted {count} diagnostic(s) under maxDiagnosticsPerReason={maximum}"
+            ),
+        });
+    }
 }
 
 fn emit_progress(
@@ -1762,6 +1902,10 @@ struct DiscoveredSources {
     issues: Vec<CoverageIssue>,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "discovery ceilings remain explicit at the scanner boundary"
+)]
 fn discover_source_files(
     root: &Path,
     ignore_policy_root: &Path,
@@ -1769,7 +1913,13 @@ fn discover_source_files(
     max_source_bytes: u64,
     max_file_bytes: u64,
     jsx_extensions: &BTreeSet<String>,
+    max_directory_depth: usize,
+    cancellation: &CancellationToken,
 ) -> Result<DiscoveredSources, ScanError> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "recursive traversal carries one shared bounded-discovery context"
+    )]
     fn visit(
         root: &Path,
         directory: &Path,
@@ -1778,7 +1928,21 @@ fn discover_source_files(
         files: &mut BTreeMap<PathBuf, PathBuf>,
         issues: &mut Vec<CoverageIssue>,
         jsx_extensions: &BTreeSet<String>,
+        depth: usize,
+        max_directory_depth: usize,
+        cancellation: &CancellationToken,
     ) -> Result<(), ScanError> {
+        if cancellation.is_cancelled() {
+            return Err(ScanError::cancelled());
+        }
+        if depth > max_directory_depth {
+            issues.push(CoverageIssue {
+                path: normalize_path(root, directory),
+                reason: "directory-depth-budget".to_owned(),
+                detail: format!("directory exceeds maxDirectoryDepth={max_directory_depth}"),
+            });
+            return Ok(());
+        }
         let resolved_directory = directory.canonicalize().map_err(|error| {
             ScanError::new(format!("cannot resolve {}: {error}", directory.display()))
         })?;
@@ -1827,6 +1991,9 @@ fn discover_source_files(
                         files,
                         issues,
                         jsx_extensions,
+                        depth + 1,
+                        max_directory_depth,
+                        cancellation,
                     )?;
                 } else if eligible_source(&resolved, jsx_extensions) {
                     files.entry(resolved.clone()).or_insert(resolved);
@@ -1859,6 +2026,9 @@ fn discover_source_files(
                         files,
                         issues,
                         jsx_extensions,
+                        depth + 1,
+                        max_directory_depth,
+                        cancellation,
                     )?;
                 }
             } else if file_type.is_file() && eligible_source(&path, jsx_extensions) {
@@ -1883,6 +2053,9 @@ fn discover_source_files(
         &mut files_by_identity,
         &mut issues,
         jsx_extensions,
+        0,
+        max_directory_depth,
+        cancellation,
     )?;
     let mut files = files_by_identity.into_values().collect::<Vec<_>>();
     files.sort();
