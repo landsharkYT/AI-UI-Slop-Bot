@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Rule-pack version | `1.0.0-beta.5` |
+| Rule-pack version | `1.0.0-beta.6` |
 | Status | Accepted for Shot 1 breadth implementation |
 | Calibration status | Pending; not release-approved |
 | Last updated | 2026-07-30 |
@@ -114,11 +114,11 @@ Design rationale and counterexample provenance are recorded in the [Refactoring 
 ## Template Convergence
 
 - Reference rationale: starting from product purpose and choosing a deliberate personality protects conventional structures from becoming an interchangeable formula.
-- Rule ID: `template-convergence`; contract version: `0.1.0-alpha`.
-- Entity: one detected route/page owner evaluated independently for every applicable Page Archetype. `App` is a page owner when used as a conventional root SPA boundary.
+- Rule ID: `template-convergence`; contract version: `0.2.0-alpha`.
+- Entity: one detected route/page owner evaluated independently for every applicable Page Archetype. Page owners are `App`, `Page`, and owners ending in `Page`, `Screen`, or `View`; a page-like filename alone does not promote helper components.
 - Versioned route/archetype structural signals remain `eyebrow-pill`, `centered-hero`, `gradient-heading`, `paired-cta`, `framed-product-media`, `bento-grid`, and `three-card-features`. Rule evaluation also accepts the plain-CSS semantic equivalents `eyebrow-label` and `repeated-panel-grid`; these two internal evidence IDs are not configurable custom-archetype signals.
 - Activation: at least three distinct structures participating in one page owner; four signals score high and five or more may score dominant.
-- Exclusions: one or two stock structures, structures split across unrelated owners, one grid counted under multiple aliases, `unknown` classification by itself, and explicitly approved distinctive structures.
+- Exclusions: one or two stock structures, structures split across unrelated owners, one grid counted under multiple aliases, functional command grids, ordinary equal-column layouts without explicit bento spans, `unknown` classification by itself, and explicitly approved distinctive structures. A three-card feature structure requires exactly three direct elements in an explicit three-column grid. A paired CTA requires exactly two direct elements in a navigation region, or in a flex container with explicit gap.
 - Score: 15 per structure + a 10-point three-structure interaction, 18 points for four, or 25 for five or more; cap 100.
 - Occurrence key: Page Archetype ID plus sorted structural signal IDs.
 - Multiple archetypes: emit one independently explained Finding per matching archetype; component aggregation uses the strongest score plus capped breadth.
@@ -128,14 +128,14 @@ Design rationale and counterexample provenance are recorded in the [Refactoring 
 ## Framework Default Convergence
 
 - Reference rationale: limiting choices should produce a deliberate product system, not the same framework-default recipe across unrelated products.
-- Rule ID: `framework-default-convergence`; contract version: `0.1.0-alpha`.
+- Rule ID: `framework-default-convergence`; contract version: `0.2.0-alpha`.
 - Entity: one Analysis Scope, actionable at each participating component owner.
-- Activation: at least four stock framework signals recur across at least three owners; every participating owner has at least four of those signals. The recurring set must include a neutral framework palette and framework rounding.
+- Activation: one eligible display element carries a coherent recipe of at least four stock framework signals in each of at least three owners. The recurring intersection must include a neutral framework palette and framework rounding.
 - Supported signals: neutral slate/gray/zinc/neutral/stone palette, sky accent, framework rounding, large preset elevation, compact preset typography, and mirrored neutral dark-mode treatment.
-- Exclusions: isolated use, fewer than three owners, palette use without a recurring component recipe, restrained custom CSS, and House Style-approved signals.
-- Score: 42 base + 4 per recurring signal on the owner + 4 per participating owner beyond three; cap 82.
+- Exclusions: signals dispersed across unrelated elements in one owner, isolated use, fewer than three owners, palette use without a recurring component recipe, controls, dialog/transient surfaces, restrained custom CSS, and House Style-approved signals.
+- Score: 42 base + 4 per recurring signal on the owner; cap 82. Cross-owner recurrence affects only the bounded Repository Profile contribution, not intrinsic Finding severity.
 - Occurrence key: sorted recurring signal IDs.
-- Coverage: only statically resolved class states contribute. Dynamic styling remains explicit coverage loss.
+- Coverage: only statically resolved class states contribute. Dynamic styling remains explicit coverage loss. Each evidence snippet is selected from an element that produced its signal.
 - Remediation: replace the repeated stock recipe with product-specific tokens, hierarchy, or component treatment; do not mechanically remove useful dark mode or accessibility behavior.
 
 ## Control Surface Homogenization

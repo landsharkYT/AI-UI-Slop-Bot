@@ -26,7 +26,7 @@ const RULES: [RuleDefinition; 11] = [
     },
     RuleDefinition {
         id: "template-convergence",
-        contract_version: "0.1.0-alpha",
+        contract_version: "0.2.0-alpha",
         summary: "A route-owned page combines several stock structures into an interchangeable formula.",
         remediation: "Replace stock composition with product-specific hierarchy, interaction, or content shape.",
         requires_routes: true,
@@ -90,7 +90,7 @@ const RULES: [RuleDefinition; 11] = [
     },
     RuleDefinition {
         id: "framework-default-convergence",
-        contract_version: "0.1.0-alpha",
+        contract_version: "0.2.0-alpha",
         summary: "A stock framework palette and component recipe recur across distinct component owners.",
         remediation: "Replace framework-default recipes with product-specific tokens, hierarchy, and component treatments.",
         requires_routes: false,

@@ -179,12 +179,7 @@ impl<'a> StyleAnalysis<'a> {
             return Ok(());
         };
         self.sources.insert(name.to_owned());
-        if source.contains("require(")
-            || source.contains("plugins:")
-            || source.contains("plugins :")
-            || source.contains("=>")
-            || source.contains("function ")
-        {
+        if has_dynamic_v3_config(&source) {
             self.unresolved.insert(format!(
                 "{name}: dynamic Tailwind configuration remains unresolved"
             ));
@@ -446,6 +441,20 @@ impl<'a> StyleAnalysis<'a> {
             semantic_traits: self.semantic_traits,
         }
     }
+}
+
+fn has_dynamic_v3_config(source: &str) -> bool {
+    if source.contains("require(") || source.contains("=>") || source.contains("function ") {
+        return true;
+    }
+    let Some(plugins) = source.find("plugins") else {
+        return false;
+    };
+    let remainder = &source[plugins + "plugins".len()..];
+    let Some((_, value)) = remainder.split_once(':') else {
+        return true;
+    };
+    !value.trim_start().starts_with("[]")
 }
 
 fn collect_v3_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, BTreeSet<String>>) {

@@ -1,70 +1,182 @@
 # AI UI Slop Bot
 
-An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
+AI UI Slop Bot is an evidence-first Rust analyzer for repeated, context-insensitive frontend aesthetics: interchangeable landing-page formulas, excessive card shells, stock framework recipes, effect stacking, and the “everything has the same compact border” treatment.
 
-The repository is at the **post-Shot C V1 implementation candidate** (`0.10.0`): the locally implementable product and hardening seams are represented end to end, followed by real-repository accuracy and score-calibration passes. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
+The current build is a **V1 implementation candidate** (`0.11.0`, rule pack `1.0.0-beta.6`). It is useful as a design-review assistant, not an objective taste oracle. Customer calibration, hosted-platform qualification, and authenticated release validation are still open.
 
-## Run it
+## Build
+
+Rust 1.96 or newer is the currently verified toolchain.
 
 ```sh
-cargo run -- scan ./path/to/react-repository --format json --progress auto
+cargo build --release
+./target/release/ai-ui-slop version
 ```
 
-The scan:
+The examples below use `ai-ui-slop` for readability. Until packaged binaries are published, substitute `./target/release/ai-ui-slop`.
 
-- loads independent monorepository Analysis Scopes from JSONC configuration;
-- analyzes named function and arrow-function components in `.jsx` and `.tsx` with Oxc;
-- resolves literal and repository-local constant Tailwind `className` strings, bounded CVA defaults/static selections/compound variants, compatible theme states, safely interpretable arbitrary values, and literal/shared static inline-style objects;
-- resolves configured, manifest, and lockfile Tailwind versions plus bounded recursive v4 CSS-first sources without importing or executing target code;
-- recognizes restrained plain-CSS card and layout semantics independently of class naming, and composes page evidence through uniquely resolved local render edges under explicit depth, owner, and fact ceilings;
-- honors the applicable checkout or Trusted Policy `.gitignore`, deduplicates internal source symlinks, and reports external symlinks as coverage loss;
-- resolves relative imports, `tsconfig` path aliases, barrels, and static lazy imports into the typed graph;
-- identifies Next App Router, Next Pages Router, configured, static React Router, and conventional React root-SPA boundaries;
-- evaluates the complete eleven-rule alpha pack and all fourteen built-in Page Archetypes, including framework-default and cross-role control-surface convergence;
-- supports explicit House Style values/primitives, narrow Suppressions, dispositions, configured routes, safe `unknown`, and declarative custom archetypes;
-- produces Finding, Component, and Repository AI Slop Scores without blending scopes;
-- explains Component and Repository scores with named capped contributions, selects one compatible reachable state per Component Profile, and marks incomplete repository-score interpretations as coverage-limited;
-- writes `.ai-ui-slop/reports/report.json` and `refactoring-brief.md`;
-- sends progress and diagnostics to stderr, leaving requested JSON stdout machine-readable; and
-- defaults to advisory operation, with Reviewed Baseline regression enforcement available only after explicit configuration and acceptance.
+## Recommended first audit
 
-Use `--progress always` to exercise the candidate progress display or `--progress never` for silent stderr. Use `--format terminal|json|markdown` to select stdout presentation.
+Start in advisory mode and review the generated assumptions before trusting the result:
 
-## Command surface
+```sh
+ai-ui-slop init ./your-react-repository
+ai-ui-slop config validate ./your-react-repository
+ai-ui-slop config validate ./your-react-repository --effective default
+ai-ui-slop scan ./your-react-repository --format terminal --progress always
+```
+
+`init` creates `ai-ui-slop.config.jsonc` and refuses to overwrite an existing file. Check these fields in particular:
+
+- `scopes`: each browser application should be its own Analysis Scope; remove server, contract, generated, and unrelated packages.
+- `houseStyle.intent`: briefly state what the product should feel like.
+- `houseStyle.approvedSignals`, `approvedValues`, and `approvedPrimitives`: record deliberate, reviewed design-system choices.
+- `classFunctions` and `componentWrappers`: add repository-specific static class combinators and transparent React wrappers.
+- `tailwindVersion`: leave `auto` only when the manifest, lockfile, or configuration identifies it correctly.
+- `resources`: keep the defaults initially; lower them only when a bounded CI environment requires it.
+
+The scan always writes the canonical artifacts to:
+
+```text
+.ai-ui-slop/reports/report.json
+.ai-ui-slop/reports/refactoring-brief.md
+```
+
+Use `--format terminal` for triage, `--format markdown` for a human-readable stdout projection, or `--format json` for automation. Progress and diagnostics go to stderr, so JSON stdout remains parseable. `--progress auto` is the default; use `always` to show phase bars in redirected/CI output and `never` for silent stderr.
+
+## How to interpret a result
+
+Do not use the repository score alone as a quality grade. Read the result in this order:
+
+1. **Coverage:** `complete` or `partial` dimensions tell you what the scanner could resolve. A `coverage_limited` interpretation cannot support a clean bill of health.
+2. **Finding evidence:** verify that each signal-specific snippet actually supports the claimed pattern.
+3. **Owner and reachable state:** confirm the finding belongs to the page/component and state you care about.
+4. **Rule explanation:** decide whether the repeated treatment is context-insensitive or a purposeful part of the product.
+5. **Score:** use it to prioritize findings within this audit, not to compare unrelated products as if taste were universal.
+
+A finding can lead to four legitimate outcomes:
+
+- **Fix it:** restore product-specific hierarchy, interaction, content shape, or role-specific treatment.
+- **Approve it as House Style:** use this for a reusable design choice that is intentional across the product.
+- **Suppress it narrowly:** use a path/owner-specific suppression with a rationale for an exceptional case.
+- **Leave it advisory:** uncertainty is preferable to encoding an unreviewed judgment as policy.
+
+When asking an agent to refactor a finding, give it the generated brief and require it to preserve behavior, accessibility, responsive behavior, focus order, and user workflows. The detector identifies convergence evidence; it does not prove a safe replacement design.
+
+## A practical review loop
+
+```sh
+# Human-readable pass
+ai-ui-slop scan . --format terminal --progress auto
+
+# Inspect canonical evidence
+jq '.scopes[] | {
+  id,
+  coverage,
+  score: .repositoryProfile,
+  findings: [.findings[] | {
+    rule: .rule_id,
+    owner,
+    path,
+    score,
+    evidence
+  }]
+}' .ai-ui-slop/reports/report.json
+
+# Explain one rule contract
+ai-ui-slop explain framework-default-convergence
+
+# Re-scan after fixes or reviewed policy changes
+ai-ui-slop scan . --format terminal --progress auto
+```
+
+Commit the configuration and reviewed policy changes with the application. Do not commit `.ai-ui-slop/reports/` unless your workflow intentionally versions generated audit artifacts.
+
+## Baselines and CI
+
+Baselines are for preventing reviewed regressions, not for hiding the first audit. Clean up or explicitly review the advisory findings before creating one:
+
+```sh
+ai-ui-slop baseline create .
+ai-ui-slop baseline accept . \
+  --approver "maintainer-name" \
+  --rationale "Reviewed current design debt and accepted it as the comparison point"
+ai-ui-slop baseline check . --format json
+```
+
+Then change `"mode": "advisory"` to `"mode": "enforcement"` in the reviewed configuration. Enforcement requires a compatible Reviewed Baseline; a rule-pack change requires semantic migration review rather than silently accepting new fingerprints.
+
+For pull requests, keep the policy and baseline in the protected base checkout:
+
+```sh
+ai-ui-slop scan ./pull-request \
+  --trusted-policy-root ./protected-base \
+  --jobs 4 \
+  --max-wall-time-seconds 600 \
+  --format json \
+  --progress always
+```
+
+The root [composite Action](action.yml) accepts a separately installed, integrity-verified binary, uploads both report artifacts, writes a job summary, and preserves scanner exit codes.
+
+### Exit codes
+
+| Code | Meaning |
+| ---: | --- |
+| `0` | Scan or lifecycle command completed without an enforceable regression. Findings may still exist in advisory mode. |
+| `1` | A compatible enforcement baseline has new or worsened enforceable findings. |
+| `2` | Invalid command, configuration, lifecycle, path, or incompatible baseline. |
+| `3` | Analysis or artifact coverage did not satisfy the active floor. |
+| `4` | Local operational failure, such as installing the interrupt handler or writing an artifact. |
+| `130` | Cancelled. Canonical artifacts are not committed for a cancelled scan. |
+
+## Supported analysis
+
+The scanner:
+
+- analyzes configured `.js`, `.jsx`, `.ts`, and `.tsx` React sources with Oxc;
+- recognizes Next App/Pages Router, static React Router, configured routes, and conventional React root-SPA boundaries;
+- resolves bounded static Tailwind, CVA, inline-style, plain-CSS, import-graph, wrapper, and reachable-state evidence without executing the target repository;
+- evaluates eleven alpha rules and fourteen built-in Page Archetypes;
+- composes page evidence only through uniquely resolved local component edges under explicit resource ceilings;
+- supports independent monorepository scopes, House Style, suppressions, rule dispositions, custom archetypes, Trusted Policy, and reviewed baselines; and
+- reports Finding, Component, and scope-bounded Repository AI Slop Scores with named contributions.
+
+See the [support matrix](docs/support-matrix.md) for exact boundaries. Inputs outside it are unsupported, not silently proven clean.
+
+## Command reference
 
 ```sh
 ai-ui-slop init ./repo
 ai-ui-slop config validate ./repo --effective default
-ai-ui-slop scan ./repo --format json
-ai-ui-slop scan ./pull-request --trusted-policy-root ./protected-base --jobs 4
-ai-ui-slop scan ./repo --max-wall-time-seconds 600
+ai-ui-slop scan ./repo --format terminal --progress auto
+ai-ui-slop scan ./repo --format json --progress never
 ai-ui-slop explain effect-stacking
 ai-ui-slop baseline create ./repo
 ai-ui-slop baseline accept ./repo --approver maintainer --rationale "Reviewed debt"
 ai-ui-slop baseline check ./repo --format json
 ai-ui-slop feedback bundle ./repo
 ai-ui-slop schema report
+ai-ui-slop schema config
 ai-ui-slop update check
 ai-ui-slop version
 ```
 
-The root [composite Action](action.yml) accepts a separately installed, integrity-verified binary, uploads both report artifacts, writes a job summary, and preserves scanner exit codes.
-
-## Verify it
+## Verify this repository
 
 ```sh
-cargo test
-cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
 ```
 
-The public seam tests cover discovery and symlinks, reachable-state class composition, shared static styles, semantic plain-CSS structures, bounded page composition, typed repository graphs and aliases, root-SPA and framework route adapters, Trusted Policy, resource ceilings, hostile filesystem and Markdown inputs, baseline migration and review metadata, parallel determinism, the eleven rule paths, Page Archetypes, command lifecycles, progress, and report artifacts.
+The public-seam tests cover discovery, graph and route adapters, static style resolution, rule boundaries, coverage and resource ceilings, hostile inputs, baselines, deterministic parallel execution, CLI lifecycles, progress, and report artifacts.
 
-## Validation still required
+The latest real-repository calibration reduced EventCardSite from 31 mixed findings to six coherent Control Surface Homogenization findings while removing false framework, dialog-decoration, and stock-template clusters. See [EventCardSite calibration evidence](docs/evidence/EVENTCARD-CALIBRATION.md).
 
-Shot 7 completes the planned implementation passes. Full V1 validation still requires the committed reference-runner workloads, hosted release smoke tests, authenticated release assets, broader fuzz/mutation evidence, and blind customer calibration. See [Shot 7](docs/shot-7.md), its [local evidence](docs/evidence/SHOT7-LOCAL.md), and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
+Design rationale and counterexample provenance from *Refactoring UI* are documented in the [reference traceability matrix](docs/references/refactoring-ui-traceability.md). The book informs explanations and counterexamples; it is not treated as a machine-enforceable taste specification.
 
-Design rationale and counterexample provenance from *Refactoring UI* are documented in the [reference traceability matrix](docs/references/refactoring-ui-traceability.md). The reference guides explanations and fixtures; it is not a machine-enforceable taste specification.
+Full V1 validation still requires committed reference-runner workloads, hosted release smoke tests, authenticated release assets, broader fuzz/mutation evidence, and blind customer calibration. See [Shot 7](docs/shot-7.md) and its [local evidence](docs/evidence/SHOT7-LOCAL.md).
 
 ## License
 

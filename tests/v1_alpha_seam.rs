@@ -117,7 +117,7 @@ fn repository_analysis_loads_jsonc_policy_and_preserves_independent_scopes() {
 
     assert_eq!(report.artifact_type, "ai-ui-slop.canonical-report");
     assert_eq!(report.schema_version, "7");
-    assert_eq!(report.rule_pack_version, "1.0.0-beta.5");
+    assert_eq!(report.rule_pack_version, "1.0.0-beta.6");
     assert_eq!(report.summary.scope_count, 2);
     assert_eq!(
         report

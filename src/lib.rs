@@ -1443,7 +1443,7 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
                 child_owner: tag.clone(),
             });
         }
-        let is_dialog = tag == "dialog";
+        let is_dialog = tag == "dialog" || has_dialog_role(element);
         let previous_depth = self.generic_depth;
         self.generic_depth = if matches!(tag.as_str(), "div" | "span") {
             previous_depth + 1
@@ -2488,13 +2488,19 @@ fn evaluate_framework_default_convergence(
     let mut facts_by_owner = BTreeMap::<(&str, &str), Vec<&ElementFact>>::new();
     let mut signals_by_owner = BTreeMap::<(&str, &str), BTreeSet<&str>>::new();
     for fact in facts {
+        if !fact.eligible_display {
+            continue;
+        }
         let framework_signals = fact
             .convergence_signals
             .iter()
             .filter(|signal| signal.starts_with("framework-"))
             .map(String::as_str)
-            .collect::<Vec<_>>();
-        if framework_signals.is_empty() {
+            .collect::<BTreeSet<_>>();
+        if framework_signals.len() < 4
+            || !framework_signals.contains("framework-neutral-palette")
+            || !framework_signals.contains("framework-rounded")
+        {
             continue;
         }
         let owner = (fact.path.as_str(), fact.owner.as_str());
@@ -2545,10 +2551,7 @@ fn evaluate_framework_default_convergence(
             .intersection(&recurring_signals)
             .map(|signal| (*signal).to_owned())
             .collect::<Vec<_>>();
-        let score = (42
-            + signature.len().saturating_mul(4)
-            + qualifying.len().saturating_sub(3).saturating_mul(4))
-        .min(82) as u8;
+        let score = (42 + signature.len().saturating_mul(4)).min(82) as u8;
         let mut finding = make_finding(
             "framework-default-convergence",
             analysis_scope,
@@ -2739,14 +2742,13 @@ fn evaluate_composed_page_rules(
     }
 }
 
-fn is_page_owner(path: &str, owner: &str) -> bool {
-    let page_name = format!("{path} {owner}").to_ascii_lowercase();
-    page_name.contains("page")
-        || page_name.contains("screen")
-        || page_name.contains("view")
-        || page_name.contains("/pages/")
-        || page_name.contains("/routes/")
-        || owner == "App"
+fn is_page_owner(_path: &str, owner: &str) -> bool {
+    let owner = owner.to_ascii_lowercase();
+    owner == "app"
+        || owner == "page"
+        || owner.ends_with("page")
+        || owner.ends_with("screen")
+        || owner.ends_with("view")
 }
 
 fn evaluate_decoration_saturation(
@@ -2944,10 +2946,6 @@ fn evaluate_template_convergence(
     for fact in facts {
         structures.extend(fact.stock_structures.iter().cloned());
     }
-    let action_count = facts.iter().filter(|fact| fact.role == "action").count();
-    if action_count >= 2 {
-        structures.insert("paired-cta".to_owned());
-    }
     if structures.len() < 3 {
         return;
     }
@@ -3059,10 +3057,18 @@ fn make_finding(
         .len();
     let evidence = signature
         .iter()
-        .map(|signal_id| Evidence {
-            signal_id: signal_id.clone(),
-            weight: (score / signature.len().max(1) as u8).max(1),
-            snippet: first.snippet.clone(),
+        .map(|signal_id| {
+            let source = facts
+                .iter()
+                .copied()
+                .filter(|fact| fact_supports_signal(fact, signal_id))
+                .min_by_key(|fact| (fact.line, fact.column))
+                .unwrap_or(first);
+            Evidence {
+                signal_id: signal_id.clone(),
+                weight: (score / signature.len().max(1) as u8).max(1),
+                snippet: source.snippet.clone(),
+            }
         })
         .collect::<Vec<_>>();
     Finding {
@@ -3419,15 +3425,29 @@ fn collect_stock_structures(
     {
         structures.insert("framed-product-media");
     }
-    if has("grid")
-        && tokens
-            .iter()
-            .any(|token| token.starts_with("grid-cols-") || token.starts_with("col-span-"))
+    if tokens
+        .iter()
+        .any(|token| token.starts_with("col-span-") || token.starts_with("row-span-"))
     {
         structures.insert("bento-grid");
-        if child_element_count >= 3 {
-            structures.insert("three-card-features");
-        }
+    }
+    if has("grid")
+        && child_element_count == 3
+        && tokens.iter().any(|token| {
+            token == "grid-cols-3"
+                || token.ends_with(":grid-cols-3")
+                || token == "grid-cols-[repeat(3,minmax(0,1fr))]"
+        })
+    {
+        structures.insert("three-card-features");
+    }
+    if child_element_count == 2
+        && (tag == "nav"
+            || (tag == "div"
+                && (has("flex") || has("inline-flex"))
+                && tokens.iter().any(|token| token.starts_with("gap-"))))
+    {
+        structures.insert("paired-cta");
     }
     structures.into_iter().map(str::to_owned).collect()
 }
@@ -3631,6 +3651,24 @@ fn escape_markdown(value: &str) -> String {
 
 fn escape_inline_code(value: &str) -> String {
     escape_markdown(value)
+}
+
+fn fact_supports_signal(fact: &ElementFact, signal_id: &str) -> bool {
+    fact.signals.iter().any(|signal| signal == signal_id)
+        || fact
+            .stock_structures
+            .iter()
+            .any(|signal| signal == signal_id)
+        || fact
+            .convergence_signals
+            .iter()
+            .any(|signal| signal == signal_id)
+        || fact.shape.as_deref() == Some(signal_id)
+        || fact
+            .visual_values
+            .iter()
+            .any(|(category, value)| format!("{category}:{value}") == signal_id)
+        || (signal_id == "card-like-container" && fact.card_like)
 }
 
 fn digest(value: &str) -> String {

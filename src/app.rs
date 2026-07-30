@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub const REPORT_SCHEMA_VERSION: &str = "7";
-pub const RULE_PACK_VERSION: &str = "1.0.0-beta.5";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.6";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
