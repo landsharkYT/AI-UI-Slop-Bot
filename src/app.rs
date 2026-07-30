@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
@@ -19,8 +19,8 @@ use crate::{
     style::{StyleAdapterReport, StyleRequest, inspect as inspect_style},
 };
 
-pub const REPORT_SCHEMA_VERSION: &str = "6";
-pub const RULE_PACK_VERSION: &str = "1.0.0-beta.3";
+pub const REPORT_SCHEMA_VERSION: &str = "7";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.4";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
@@ -188,7 +188,19 @@ pub struct ComponentProfile {
     pub owner: String,
     pub score: u8,
     pub band: String,
+    pub scored_reachable_state: Option<String>,
+    pub contributions: Vec<ScoreContribution>,
     pub finding_fingerprints: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScoreContribution {
+    pub id: String,
+    pub points: u8,
+    pub cap: u8,
+    pub evidence_count: usize,
+    pub explanation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +215,8 @@ pub struct FindingImpact {
 pub struct RepositoryProfile {
     pub score: u8,
     pub band: String,
+    pub interpretation_status: String,
+    pub contributions: Vec<ScoreContribution>,
     pub component_count: usize,
     pub affected_component_count: usize,
     pub recurring_patterns: BTreeMap<String, usize>,
@@ -587,7 +601,6 @@ fn analyze_scope(
         .saturating_add(ownership_losses);
     let finding_impacts = finding_impacts(&scan_report.findings, &graph_analysis.graph);
     let component_profiles = aggregate_components(&scan_report.findings, &scan_report.owners);
-    let repository_profile = aggregate_repository(&component_profiles, &scan_report.findings);
     let unresolved = scan_report.coverage.unresolved.len() as u64;
     let discovered = scan_report.coverage.files_discovered as u64;
     let analyzed = scan_report.coverage.files_analyzed as u64;
@@ -687,6 +700,8 @@ fn analyze_scope(
     } else {
         "incomplete"
     };
+    let repository_profile =
+        aggregate_repository(&component_profiles, &scan_report.findings, status);
     let mut resource_usage = scan_report.resource_usage;
     resource_usage.diagnostics_emitted = diagnostics.len() as u64;
     Ok(ScopeReport {
@@ -747,12 +762,25 @@ pub fn render_refactoring_brief(report: &CanonicalReport) -> String {
     ));
     for scope in &report.scopes {
         output.push_str(&format!(
-            "## Scope: {}\n\nRepository Profile: **{}/100 ({})**. Coverage status: **{}**.\n\n",
+            "## Scope: {}\n\nRepository Profile: **{}/100 ({})**. Coverage status: **{}**. Score interpretation: **{}**.\n\n",
             escape_markdown(&scope.id),
             scope.repository_profile.score,
             scope.repository_profile.band,
-            scope.status
+            scope.status,
+            scope.repository_profile.interpretation_status
         ));
+        output.push_str("Score contributions:\n\n");
+        for contribution in &scope.repository_profile.contributions {
+            output.push_str(&format!(
+                "- {}: **{}/{} points** from {} evidence unit(s) — {}\n",
+                escape_markdown(&contribution.id),
+                contribution.points,
+                contribution.cap,
+                contribution.evidence_count,
+                escape_markdown(&contribution.explanation)
+            ));
+        }
+        output.push('\n');
         output.push_str("### Ordered work batches\n\n");
         if scope.findings.is_empty() {
             output.push_str("No Findings require a refactoring batch.\n\n");
@@ -884,47 +912,212 @@ fn aggregate_components(findings: &[Finding], owners: &[AnalyzedOwner]) -> Vec<C
     }
     grouped
         .into_iter()
-        .map(|((path, owner), mut owner_findings)| {
-            owner_findings.sort_by_key(|finding| std::cmp::Reverse(finding.score));
-            let strongest = owner_findings.first().map_or(0, |finding| finding.score);
-            let breadth = owner_findings.len().saturating_sub(1).min(4) as u8 * 5;
-            let score = strongest.saturating_add(breadth).min(100);
+        .map(|((path, owner), owner_findings)| {
+            let mut by_state = BTreeMap::<&str, Vec<&Finding>>::new();
+            for finding in &owner_findings {
+                by_state
+                    .entry(&finding.reachable_state)
+                    .or_default()
+                    .push(finding);
+            }
+            let mut selected: Option<(u8, u8, &str, Vec<ScoreContribution>)> = None;
+            for (state, mut state_findings) in by_state {
+                state_findings.sort_by(|left, right| {
+                    right
+                        .score
+                        .cmp(&left.score)
+                        .then_with(|| {
+                            confidence_rank(&right.confidence)
+                                .cmp(&confidence_rank(&left.confidence))
+                        })
+                        .then_with(|| left.fingerprint.cmp(&right.fingerprint))
+                });
+                let strongest = state_findings.first().map_or(0, |finding| finding.score);
+                let confidence = state_findings
+                    .first()
+                    .map_or(0, |finding| confidence_rank(&finding.confidence));
+                let distinct_patterns = state_findings
+                    .iter()
+                    .map(|finding| finding.rule_id.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .len();
+                let raw_breadth = distinct_patterns
+                    .saturating_sub(1)
+                    .saturating_mul(5)
+                    .min(20) as u8;
+                let breadth = raw_breadth.min(100_u8.saturating_sub(strongest));
+                let score = strongest + breadth;
+                let contributions = vec![
+                    ScoreContribution {
+                        id: "strongest-finding".to_owned(),
+                        points: strongest,
+                        cap: 100,
+                        evidence_count: usize::from(strongest > 0),
+                        explanation:
+                            "Strongest Finding in the selected compatible reachable state."
+                                .to_owned(),
+                    },
+                    ScoreContribution {
+                        id: "distinct-pattern-breadth".to_owned(),
+                        points: breadth,
+                        cap: 20,
+                        evidence_count: distinct_patterns.saturating_sub(1),
+                        explanation:
+                            "Five capped points for each additional distinct Slop Pattern."
+                                .to_owned(),
+                    },
+                ];
+                let replace =
+                    selected
+                        .as_ref()
+                        .is_none_or(|(best_score, best_confidence, best_state, _)| {
+                            score > *best_score
+                                || (score == *best_score && confidence > *best_confidence)
+                                || (score == *best_score
+                                    && confidence == *best_confidence
+                                    && state < *best_state)
+                        });
+                if replace {
+                    selected = Some((score, confidence, state, contributions));
+                }
+            }
+            let (score, scored_reachable_state, contributions) = selected
+                .map_or((0, None, Vec::new()), |(score, _, state, contributions)| {
+                    (score, Some(state.to_owned()), contributions)
+                });
+            let mut finding_fingerprints = owner_findings
+                .into_iter()
+                .map(|finding| finding.fingerprint.clone())
+                .collect::<Vec<_>>();
+            finding_fingerprints.sort();
             ComponentProfile {
                 path,
                 owner,
                 score,
                 band: score_band(score).to_owned(),
-                finding_fingerprints: owner_findings
-                    .into_iter()
-                    .map(|finding| finding.fingerprint.clone())
-                    .collect(),
+                scored_reachable_state,
+                contributions,
+                finding_fingerprints,
             }
         })
         .collect()
 }
 
-fn aggregate_repository(profiles: &[ComponentProfile], findings: &[Finding]) -> RepositoryProfile {
+fn confidence_rank(confidence: &str) -> u8 {
+    match confidence {
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
+}
+
+fn aggregate_repository(
+    profiles: &[ComponentProfile],
+    findings: &[Finding],
+    scope_status: &str,
+) -> RepositoryProfile {
     let affected = profiles.iter().filter(|profile| profile.score > 0).count();
     let strongest = profiles
         .iter()
         .map(|profile| profile.score)
         .max()
         .unwrap_or(0);
+    let severity = (u16::from(strongest) * 60 / 100) as u8;
     let prevalence = if profiles.is_empty() {
         0
     } else {
-        (affected.saturating_mul(30) / profiles.len()).min(30) as u8
+        (affected.saturating_mul(20) / profiles.len()).min(20) as u8
     };
-    let score = strongest.saturating_mul(7) / 10 + prevalence;
     let mut recurring_patterns = BTreeMap::new();
+    let mut owners_by_pattern = BTreeMap::<&str, BTreeSet<(&str, &str)>>::new();
+    let mut patterns_by_owner = BTreeMap::<(&str, &str), BTreeSet<&str>>::new();
+    let selected_states = profiles
+        .iter()
+        .filter_map(|profile| {
+            profile
+                .scored_reachable_state
+                .as_deref()
+                .map(|state| ((profile.path.as_str(), profile.owner.as_str()), state))
+        })
+        .collect::<BTreeMap<_, _>>();
     for finding in findings {
         *recurring_patterns
             .entry(finding.rule_id.clone())
             .or_insert(0) += 1;
+        if selected_states
+            .get(&(finding.path.as_str(), finding.owner.as_str()))
+            .is_none_or(|state| *state != finding.reachable_state)
+        {
+            continue;
+        }
+        owners_by_pattern
+            .entry(&finding.rule_id)
+            .or_default()
+            .insert((&finding.path, &finding.owner));
+        patterns_by_owner
+            .entry((&finding.path, &finding.owner))
+            .or_default()
+            .insert(&finding.rule_id);
     }
+    let recurring_owner_excess = owners_by_pattern
+        .values()
+        .map(|owners| owners.len().saturating_sub(1))
+        .sum::<usize>();
+    let recurrence = recurring_owner_excess.saturating_mul(3).min(15) as u8;
+    let dense_components = patterns_by_owner
+        .values()
+        .filter(|patterns| patterns.len() >= 2)
+        .count();
+    let density = dense_components.saturating_mul(2).min(5) as u8;
+    let score =
+        u16::from(severity) + u16::from(prevalence) + u16::from(recurrence) + u16::from(density);
+    let contributions = vec![
+        ScoreContribution {
+            id: "strongest-component-severity".to_owned(),
+            points: severity,
+            cap: 60,
+            evidence_count: usize::from(strongest > 0),
+            explanation: "Sixty-percent bounded projection of the strongest Component Profile."
+                .to_owned(),
+        },
+        ScoreContribution {
+            id: "affected-component-prevalence".to_owned(),
+            points: prevalence,
+            cap: 20,
+            evidence_count: affected,
+            explanation: "Affected-component share of the Analysis Scope, capped at 20 points."
+                .to_owned(),
+        },
+        ScoreContribution {
+            id: "cross-owner-recurrence".to_owned(),
+            points: recurrence,
+            cap: 15,
+            evidence_count: recurring_owner_excess,
+            explanation:
+                "Three points for each recurrence of a pattern beyond its first distinct owner."
+                    .to_owned(),
+        },
+        ScoreContribution {
+            id: "multi-pattern-density".to_owned(),
+            points: density,
+            cap: 5,
+            evidence_count: dense_components,
+            explanation:
+                "Two capped points for each component carrying multiple distinct patterns."
+                    .to_owned(),
+        },
+    ];
     RepositoryProfile {
-        score: score.min(100),
-        band: score_band(score.min(100)).to_owned(),
+        score: score.min(100) as u8,
+        band: score_band(score.min(100) as u8).to_owned(),
+        interpretation_status: if scope_status == "complete" {
+            "qualified"
+        } else {
+            "coverage_limited"
+        }
+        .to_owned(),
+        contributions,
         component_count: profiles.len(),
         affected_component_count: affected,
         recurring_patterns,

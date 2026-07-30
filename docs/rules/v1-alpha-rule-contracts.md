@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Rule-pack version | `1.0.0-beta.3` |
+| Rule-pack version | `1.0.0-beta.4` |
 | Status | Accepted for Shot 1 breadth implementation |
 | Calibration status | Pending; not release-approved |
 | Last updated | 2026-07-30 |

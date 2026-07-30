@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-ui-slop.dev/schema/report/6",
+  "$id": "https://ai-ui-slop.dev/schema/report/7",
   "title": "AI UI Slop Canonical Report",
   "type": "object",
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "artifactType": { "const": "ai-ui-slop.canonical-report" },
-    "schemaVersion": { "const": "6" },
+    "schemaVersion": { "const": "7" },
     "toolVersion": { "type": "string" },
     "rulePackVersion": { "type": "string" },
     "fingerprintAlgorithmVersion": { "type": "string" },
@@ -71,6 +71,49 @@
               "additionalProperties": false
             }
           },
+          "componentProfiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "owner", "score", "band", "scoredReachableState", "contributions", "findingFingerprints"],
+              "properties": {
+                "path": { "type": "string" },
+                "owner": { "type": "string" },
+                "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+                "band": { "type": "string" },
+                "scoredReachableState": { "type": ["string", "null"] },
+                "contributions": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/scoreContribution" }
+                },
+                "findingFingerprints": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "repositoryProfile": {
+            "type": "object",
+            "required": ["score", "band", "interpretationStatus", "contributions", "componentCount", "affectedComponentCount", "recurringPatterns"],
+            "properties": {
+              "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+              "band": { "type": "string" },
+              "interpretationStatus": { "enum": ["qualified", "coverage_limited"] },
+              "contributions": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/scoreContribution" }
+              },
+              "componentCount": { "type": "integer", "minimum": 0 },
+              "affectedComponentCount": { "type": "integer", "minimum": 0 },
+              "recurringPatterns": {
+                "type": "object",
+                "additionalProperties": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "additionalProperties": false
+          },
           "styleAdapter": {
             "type": "object",
             "required": [
@@ -108,6 +151,20 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "scoreContribution": {
+      "type": "object",
+      "required": ["id", "points", "cap", "evidenceCount", "explanation"],
+      "properties": {
+        "id": { "type": "string" },
+        "points": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "cap": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "evidenceCount": { "type": "integer", "minimum": 0 },
+        "explanation": { "type": "string" }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

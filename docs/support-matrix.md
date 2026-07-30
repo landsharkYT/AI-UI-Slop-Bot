@@ -13,9 +13,9 @@ Status: Shot 7 V1 implementation complete; external validation pending.
 | Inline styles | Literal and repository-local shared static object values for supported decorative categories |
 | Plain CSS | Statically referenced scope-local stylesheets; simple class selectors, bounded unique global static custom properties, generated simple `::before`/`::after` decoration, restrained card surfaces, repeated grids, and eyebrow typography share the signal model; scoped/ambiguous/cyclic variables and conditional or compound signal-bearing selectors become explicit coverage loss |
 | Configuration | `ai-ui-slop.config.jsonc`, schema 1 |
-| Canonical report | JSON schema 6 and Markdown projection, including canonical resource usage |
+| Canonical report | JSON schema 7 and Markdown projection, including canonical resource usage, score contributions, selected component state, and score-interpretation qualification |
 | Baseline | JSON schema 2 with semantic migration preview |
-| Rule pack | `1.0.0-beta.3`, nine executable rule paths |
+| Rule pack | `1.0.0-beta.4`, nine executable rule paths and bounded component/repository aggregation |
 | Page Archetypes | Fourteen built-in IDs, `unknown`, and declarative custom definitions |
 | Static class composition | Literals, repository-local constants, static templates, finite conditionals, standard combinators, configured class helpers, CVA defaults/static selections/scalar-or-array compound variants, and bounded variant-condition families |
 | Repository discovery | Checkout/Trusted Policy `.gitignore`, built-in exclusions, internal symlink deduplication, external-symlink diagnostics, UTF-8 BOM and CRLF; `init` uses React plus browser-entrypoint evidence and bounded nested discovery |

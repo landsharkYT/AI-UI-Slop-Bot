@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at the **post-Shot 7 V1 implementation candidate** (`0.8.0`): the locally implementable product and hardening seams are represented end to end, followed by real-repository accuracy passes. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
+The repository is at the **post-Shot 7 V1 implementation candidate** (`0.9.0`): the locally implementable product and hardening seams are represented end to end, followed by real-repository accuracy and score-calibration passes. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
 
 ## Run it
 
@@ -23,6 +23,7 @@ The scan:
 - evaluates the complete nine-rule alpha pack and all fourteen built-in Page Archetypes;
 - supports explicit House Style values/primitives, narrow Suppressions, dispositions, configured routes, safe `unknown`, and declarative custom archetypes;
 - produces Finding, Component, and Repository AI Slop Scores without blending scopes;
+- explains Component and Repository scores with named capped contributions, selects one compatible reachable state per Component Profile, and marks incomplete repository-score interpretations as coverage-limited;
 - writes `.ai-ui-slop/reports/report.json` and `refactoring-brief.md`;
 - sends progress and diagnostics to stderr, leaving requested JSON stdout machine-readable; and
 - defaults to advisory operation, with Reviewed Baseline regression enforcement available only after explicit configuration and acceptance.

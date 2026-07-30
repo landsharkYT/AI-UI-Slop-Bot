@@ -798,7 +798,7 @@ fn run_schema(arguments: &[String]) -> Result<(), (u8, String)> {
 
 fn run_version() -> Result<(), (u8, String)> {
     println!(
-        "ai-ui-slop {}\nreport-schema 6\nconfig-schema 1\nbaseline-schema 2\nrule-pack {}\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
+        "ai-ui-slop {}\nreport-schema 7\nconfig-schema 1\nbaseline-schema 2\nrule-pack {}\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
         env!("CARGO_PKG_VERSION"),
         RULE_PACK_VERSION
     );
@@ -924,9 +924,19 @@ fn render_terminal_report(report: &ai_ui_slop::CanonicalReport) {
     );
     for scope in &report.scopes {
         println!(
-            "scope {}: repository score {}/100 ({}), coverage {}",
-            scope.id, scope.repository_profile.score, scope.repository_profile.band, scope.status
+            "scope {}: repository score {}/100 ({}), coverage {}, interpretation {}",
+            scope.id,
+            scope.repository_profile.score,
+            scope.repository_profile.band,
+            scope.status,
+            scope.repository_profile.interpretation_status
         );
+        for contribution in &scope.repository_profile.contributions {
+            println!(
+                "  score {}: {}/{} points ({} evidence unit(s))",
+                contribution.id, contribution.points, contribution.cap, contribution.evidence_count
+            );
+        }
         for finding in &scope.findings {
             println!(
                 "{}:{}:{} {} [{}] {}/100 ({}, {})",
