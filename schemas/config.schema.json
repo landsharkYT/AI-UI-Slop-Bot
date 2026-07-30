@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-ui-slop.dev/schema/config/1",
+  "title": "AI UI Slop Configuration",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "mode": { "enum": ["advisory", "enforcement"] },
+    "scopes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "root"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "root": { "type": "string", "minLength": 1 },
+          "houseStyle": { "$ref": "#/$defs/houseStyle" },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "archetypes"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "owner": { "type": "string" },
+                "archetypes": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string" }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "houseStyle": { "$ref": "#/$defs/houseStyle" },
+    "suppressions": { "type": "array" },
+    "rules": { "type": "object" },
+    "customArchetypes": { "type": "array" },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 1 },
+        "maxSourceBytes": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "houseStyle": {
+      "type": "object",
+      "properties": {
+        "intent": { "type": "string" },
+        "approvedSignals": { "type": "array", "items": { "type": "string" } },
+        "approvedValues": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "approvedPrimitives": { "type": "array" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

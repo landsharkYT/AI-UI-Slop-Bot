@@ -17,17 +17,21 @@ fn recurring_six_signal_shell_emits_one_finding_per_distinct_owner() {
     assert_eq!(report.coverage.files_discovered, 3);
     assert_eq!(report.coverage.files_analyzed, 3);
     assert!(report.coverage.unresolved.is_empty());
-    assert_eq!(report.findings.len(), 3);
-
-    let owners = report
+    let findings = report
         .findings
+        .iter()
+        .filter(|finding| finding.rule_id == "repeated-decorative-shell")
+        .collect::<Vec<_>>();
+    assert_eq!(findings.len(), 3);
+
+    let owners = findings
         .iter()
         .map(|finding| finding.owner.as_str())
         .collect::<Vec<_>>();
     assert_eq!(owners, ["AccountCard", "MetricCard", "ProjectCard"]);
 
-    let cluster = &report.findings[0].cluster_id;
-    for finding in &report.findings {
+    let cluster = &findings[0].cluster_id;
+    for finding in findings {
         assert_eq!(finding.rule_id, "repeated-decorative-shell");
         assert_eq!(finding.contract_version, "0.1.0-prototype");
         assert_eq!(finding.cluster_id, *cluster);

@@ -1,0 +1,75 @@
+name: AI UI Slop Bot
+description: Run the pinned native scanner and upload its canonical report and Refactoring Brief.
+
+inputs:
+  binary-path:
+    description: Absolute path to a preinstalled, integrity-verified ai-ui-slop binary.
+    required: true
+  artifact-name:
+    description: Workflow artifact name.
+    required: false
+    default: ai-ui-slop-report
+
+outputs:
+  exit-code:
+    description: Stable scanner exit code.
+    value: ${{ steps.scan.outputs.exit-code }}
+  report-path:
+    description: Canonical report path.
+    value: ${{ github.workspace }}/.ai-ui-slop/reports/report.json
+  brief-path:
+    description: Refactoring Brief path.
+    value: ${{ github.workspace }}/.ai-ui-slop/reports/refactoring-brief.md
+
+runs:
+  using: composite
+  steps:
+    - id: scan
+      name: Run whole-repository scan
+      shell: bash
+      env:
+        AI_UI_SLOP_BINARY: ${{ inputs.binary-path }}
+      run: |
+        set +e
+        "$AI_UI_SLOP_BINARY" scan "$GITHUB_WORKSPACE" --format terminal --progress auto
+        scan_status="$?"
+        set -e
+        case "$scan_status" in
+          0|1|2|3|4|130) ;;
+          *) scan_status=4 ;;
+        esac
+        echo "exit-code=$scan_status" >> "$GITHUB_OUTPUT"
+
+    - name: Upload canonical reports
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      if: ${{ always() && hashFiles('.ai-ui-slop/reports/report.json') != '' }}
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          .ai-ui-slop/reports/report.json
+          .ai-ui-slop/reports/refactoring-brief.md
+        if-no-files-found: error
+
+    - name: Write job summary
+      if: ${{ always() && hashFiles('.ai-ui-slop/reports/refactoring-brief.md') != '' }}
+      shell: bash
+      run: |
+        {
+          echo "## AI UI Slop Bot"
+          echo
+          echo "Scanner exit code: \`${{ steps.scan.outputs.exit-code }}\`"
+          echo
+          cat "$GITHUB_WORKSPACE/.ai-ui-slop/reports/refactoring-brief.md"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Preserve scanner outcome
+      if: ${{ always() }}
+      shell: bash
+      env:
+        AI_UI_SLOP_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        case "$AI_UI_SLOP_EXIT_CODE" in
+          0) exit 0 ;;
+          1|2|3|4|130) exit "$AI_UI_SLOP_EXIT_CODE" ;;
+          *) exit 4 ;;
+        esac

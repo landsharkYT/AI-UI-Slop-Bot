@@ -1,5 +1,25 @@
 //! Public scanner interface for AI UI Slop Bot.
 
+mod app;
+mod baseline;
+mod catalog;
+pub mod policy;
+
+pub use app::{
+    ArchetypeMatch, CanonicalReport, ComponentProfile, CoverageDimension, CoverageVector,
+    ReportSummary, RepositoryError, RepositoryProfile, RepositoryRequest, RouteClassification,
+    ScopeDiagnostic, ScopeReport, analyze_repository, analyze_repository_with_progress,
+    render_refactoring_brief,
+};
+pub use baseline::{
+    BASELINE_SCHEMA_VERSION, BaselineArtifact, BaselineChange, BaselineComparison, BaselineFinding,
+    BaselineReview, BaselineStatus, accept_candidate, compare_baseline, create_candidate,
+};
+pub use catalog::{
+    PageArchetypeDefinition, RuleDefinition, page_archetype_catalog, rule_catalog,
+    structural_signal_catalog,
+};
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -9,8 +29,8 @@ use std::{
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXElement, ObjectExpression,
-    ObjectPropertyKind, VariableDeclarator,
+    Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXChild, JSXElement,
+    ObjectExpression, ObjectPropertyKind, VariableDeclarator,
 };
 use oxc_ast_visit::{
     Visit,
@@ -28,6 +48,7 @@ const CONTRACT_VERSION: &str = "0.1.0-prototype";
 pub struct ScanRequest {
     pub root: PathBuf,
     pub analysis_scope: String,
+    pub policy: ScanPolicy,
 }
 
 impl ScanRequest {
@@ -36,6 +57,36 @@ impl ScanRequest {
         Self {
             root: root.into(),
             analysis_scope: "default".to_owned(),
+            policy: ScanPolicy::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ScanPolicy {
+    pub approved_signals: BTreeSet<String>,
+    pub approved_values: BTreeMap<String, BTreeSet<String>>,
+    pub approved_primitives: BTreeSet<(String, String)>,
+    pub suppressions: BTreeSet<(String, String, String)>,
+    pub rule_dispositions: BTreeMap<String, String>,
+    pub rule_minimum_scores: BTreeMap<String, u8>,
+    pub rule_minimum_confidences: BTreeMap<String, String>,
+    pub max_files: usize,
+    pub max_source_bytes: u64,
+}
+
+impl Default for ScanPolicy {
+    fn default() -> Self {
+        Self {
+            approved_signals: BTreeSet::new(),
+            approved_values: BTreeMap::new(),
+            approved_primitives: BTreeSet::new(),
+            suppressions: BTreeSet::new(),
+            rule_dispositions: BTreeMap::new(),
+            rule_minimum_scores: BTreeMap::new(),
+            rule_minimum_confidences: BTreeMap::new(),
+            max_files: 20_000,
+            max_source_bytes: 512 * 1024 * 1024,
         }
     }
 }
@@ -67,13 +118,22 @@ pub struct ScanReport {
     pub schema_version: String,
     pub root: String,
     pub findings: Vec<Finding>,
+    pub owners: Vec<AnalyzedOwner>,
     pub coverage: Coverage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnalyzedOwner {
+    pub path: String,
+    pub owner: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Coverage {
     pub files_discovered: usize,
     pub files_analyzed: usize,
+    pub style_expressions_total: usize,
+    pub style_expressions_resolved: usize,
     pub unresolved: Vec<CoverageIssue>,
 }
 
@@ -101,6 +161,9 @@ pub struct Finding {
     pub score: u8,
     pub band: String,
     pub confidence: String,
+    pub evidence_digest: String,
+    pub policy_disposition: String,
+    pub archetypes: Vec<String>,
     pub explanation: String,
     pub remediation: String,
 }
@@ -133,6 +196,23 @@ struct Candidate {
     evidence: Vec<Evidence>,
 }
 
+#[derive(Debug, Clone)]
+struct ElementFact {
+    path: String,
+    owner: String,
+    line: usize,
+    column: usize,
+    role: String,
+    generic_depth: usize,
+    signals: Vec<String>,
+    visual_values: Vec<(String, String)>,
+    shape: Option<String>,
+    card_like: bool,
+    stock_structures: Vec<String>,
+    snippet: String,
+    eligible_display: bool,
+}
+
 #[derive(Clone, Copy)]
 struct ComponentOwner<'a> {
     name: &'a str,
@@ -143,9 +223,14 @@ struct CandidateVisitor<'a> {
     path: &'a str,
     owners: Vec<ComponentOwner<'a>>,
     candidates: Vec<Candidate>,
+    facts: Vec<ElementFact>,
     unresolved_dynamic_style: usize,
     unresolved_unowned_style: usize,
+    style_expressions_total: usize,
+    style_expressions_resolved: usize,
     dialog_depth: usize,
+    generic_depth: usize,
+    approved_signals: &'a BTreeSet<String>,
 }
 
 impl<'a> CandidateVisitor<'a> {
@@ -183,18 +268,9 @@ impl<'a> CandidateVisitor<'a> {
             .get_identifier_name()
             .map(|name| name.to_string())
             .unwrap_or_default();
-        if self.dialog_depth > 0
-            || matches!(
-                tag.as_str(),
-                "button" | "input" | "select" | "textarea" | "option" | "label"
-            )
-            || element.children.is_empty()
-            || has_dialog_role(element)
-        {
-            return;
-        }
 
         let mut signals = BTreeMap::<&'static str, u8>::new();
+        let mut class_tokens = Vec::<String>::new();
         for attribute in &element.opening_element.attributes {
             let JSXAttributeItem::Attribute(attribute) = attribute else {
                 self.unresolved_dynamic_style += 1;
@@ -202,21 +278,29 @@ impl<'a> CandidateVisitor<'a> {
             };
             let name = attribute.name.get_identifier().name.as_str();
             if name == "className" {
+                self.style_expressions_total += 1;
                 match attribute.value.as_ref() {
                     Some(JSXAttributeValue::StringLiteral(value)) => {
+                        self.style_expressions_resolved += 1;
                         collect_class_signals(value.value.as_str(), &mut signals);
+                        class_tokens
+                            .extend(value.value.split_ascii_whitespace().map(str::to_owned));
                     }
                     Some(_) => self.unresolved_dynamic_style += 1,
                     None => {}
                 }
             } else if name == "style" {
+                self.style_expressions_total += 1;
                 match attribute.value.as_ref() {
                     Some(JSXAttributeValue::ExpressionContainer(container)) => {
                         if let oxc_ast::ast::JSXExpression::ObjectExpression(object) =
                             &container.expression
                         {
-                            self.unresolved_dynamic_style +=
-                                collect_inline_signals(object, &mut signals);
+                            let unresolved = collect_inline_signals(object, &mut signals);
+                            self.unresolved_dynamic_style += unresolved;
+                            if unresolved == 0 {
+                                self.style_expressions_resolved += 1;
+                            }
                         } else {
                             self.unresolved_dynamic_style += 1;
                         }
@@ -227,16 +311,17 @@ impl<'a> CandidateVisitor<'a> {
             }
         }
 
-        if signals.len() < 3 {
-            return;
-        }
+        signals.retain(|signal, _| !self.approved_signals.contains(*signal));
         let span = element.opening_element.span;
         let (line, column) = line_column(self.source, span.start as usize);
         let snippet = source_slice(self.source, span.start, span.end)
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        let signature = signals.keys().map(|signal| (*signal).to_owned()).collect();
+        let signature = signals
+            .keys()
+            .map(|signal| (*signal).to_owned())
+            .collect::<Vec<_>>();
         let evidence = signals
             .into_iter()
             .map(|(signal_id, weight)| Evidence {
@@ -244,15 +329,66 @@ impl<'a> CandidateVisitor<'a> {
                 weight,
                 snippet: snippet.clone(),
             })
-            .collect();
-        self.candidates.push(Candidate {
+            .collect::<Vec<_>>();
+        let eligible_display = self.dialog_depth == 0
+            && !matches!(
+                tag.as_str(),
+                "button" | "input" | "select" | "textarea" | "option" | "label"
+            )
+            && !element.children.is_empty()
+            && !has_dialog_role(element);
+        let visual_values = collect_visual_values(&class_tokens);
+        let shape = if class_tokens.iter().any(|token| token == "rounded-full") {
+            Some("pill".to_owned())
+        } else if signature.iter().any(|signal| signal == "extreme-radius") {
+            Some("extreme-rounded".to_owned())
+        } else {
+            None
+        };
+        let card_like = signature.iter().any(|signal| signal == "generous-padding")
+            && signature.iter().any(|signal| {
+                matches!(
+                    signal.as_str(),
+                    "extreme-radius"
+                        | "gradient-surface"
+                        | "large-shadow"
+                        | "decorative-outline"
+                        | "backdrop-treatment"
+                )
+            });
+        let child_element_count = element
+            .children
+            .iter()
+            .filter(|child| matches!(child, JSXChild::Element(_)))
+            .count();
+        let role = structural_role(&tag).to_owned();
+        let stock_structures =
+            collect_stock_structures(&tag, &class_tokens, &signature, child_element_count);
+        self.facts.push(ElementFact {
             path: self.path.to_owned(),
             owner: owner.name.to_owned(),
             line,
             column,
-            signature,
-            evidence,
+            role,
+            generic_depth: self.generic_depth,
+            signals: signature.clone(),
+            visual_values,
+            shape,
+            card_like,
+            stock_structures,
+            snippet,
+            eligible_display,
         });
+        if eligible_display && signature.len() >= 3 {
+            self.candidates.push(Candidate {
+                path: self.path.to_owned(),
+                owner: owner.name.to_owned(),
+                line,
+                column,
+                signature,
+                evidence,
+            });
+        }
     }
 }
 
@@ -280,11 +416,19 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
     }
 
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
-        let is_dialog = element
+        let tag = element
             .opening_element
             .name
             .get_identifier_name()
-            .is_some_and(|name| name == "dialog");
+            .map(|name| name.to_string())
+            .unwrap_or_default();
+        let is_dialog = tag == "dialog";
+        let previous_depth = self.generic_depth;
+        self.generic_depth = if matches!(tag.as_str(), "div" | "span") {
+            previous_depth + 1
+        } else {
+            0
+        };
         if is_dialog {
             self.dialog_depth += 1;
         }
@@ -293,6 +437,7 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
         if is_dialog {
             self.dialog_depth -= 1;
         }
+        self.generic_depth = previous_depth;
     }
 }
 
@@ -325,24 +470,32 @@ pub fn scan_with_progress(
         )));
     }
 
-    let files = discover_source_files(&root)?;
+    let discovery = discover_source_files(
+        &root,
+        request.policy.max_files,
+        request.policy.max_source_bytes,
+    )?;
     emit_progress(
         &mut progress,
         "discovering",
-        files.len(),
-        Some(files.len()),
+        discovery.files.len(),
+        Some(discovery.total_count),
         10,
-        0,
+        usize::from(discovery.issue.is_some()),
         "source inventory complete",
     );
     let mut coverage = Coverage {
-        files_discovered: files.len(),
+        files_discovered: discovery.total_count,
         ..Coverage::default()
     };
+    if let Some(issue) = discovery.issue {
+        coverage.unresolved.push(issue);
+    }
     let mut candidates = Vec::new();
+    let mut facts = Vec::new();
 
-    let file_total = files.len();
-    for (index, file) in files.into_iter().enumerate() {
+    let file_total = discovery.files.len();
+    for (index, file) in discovery.files.into_iter().enumerate() {
         let relative = normalize_path(&root, &file);
         let file_start = file_work_units(index, 0, file_total);
         let file_parsed = file_work_units(index, 1, file_total);
@@ -420,21 +573,36 @@ pub fn scan_with_progress(
             coverage.unresolved.len(),
             "resolving static JSX styling and component ownership",
         );
-        let (file_candidates, unresolved_dynamic_style, unresolved_unowned_style) = {
+        let (
+            file_candidates,
+            file_facts,
+            unresolved_dynamic_style,
+            unresolved_unowned_style,
+            style_expressions_total,
+            style_expressions_resolved,
+        ) = {
             let mut visitor = CandidateVisitor {
                 source: &source,
                 path: &relative,
                 owners: Vec::new(),
                 candidates: Vec::new(),
+                facts: Vec::new(),
                 unresolved_dynamic_style: 0,
                 unresolved_unowned_style: 0,
+                style_expressions_total: 0,
+                style_expressions_resolved: 0,
                 dialog_depth: 0,
+                generic_depth: 0,
+                approved_signals: &request.policy.approved_signals,
             };
             visitor.visit_program(&parsed.program);
             (
                 visitor.candidates,
+                visitor.facts,
                 visitor.unresolved_dynamic_style,
                 visitor.unresolved_unowned_style,
+                visitor.style_expressions_total,
+                visitor.style_expressions_resolved,
             )
         };
         if unresolved_dynamic_style > 0 {
@@ -458,7 +626,10 @@ pub fn scan_with_progress(
             });
         }
         candidates.extend(file_candidates);
+        facts.extend(file_facts);
         coverage.files_analyzed += 1;
+        coverage.style_expressions_total += style_expressions_total;
+        coverage.style_expressions_resolved += style_expressions_resolved;
         emit_progress(
             &mut progress,
             "resolving styles and owners",
@@ -477,18 +648,29 @@ pub fn scan_with_progress(
         Some(0),
         75,
         coverage.unresolved.len(),
-        "not applicable to the Discovery Prototype",
+        "classifying route-owned components and Page Archetypes",
     );
     emit_progress(
         &mut progress,
         "evaluating slop patterns",
-        candidates.len(),
-        Some(candidates.len()),
+        facts.len(),
+        Some(facts.len()),
         85,
         coverage.unresolved.len(),
-        "evaluating Repeated Decorative Shell candidates",
+        "evaluating the nine-rule V1 alpha pack",
     );
-    let findings = activate_recurrence(candidates, &request.analysis_scope);
+    let mut findings = activate_recurrence(candidates.clone(), &request.analysis_scope);
+    findings.extend(activate_effect_stacking(
+        candidates,
+        &request.analysis_scope,
+    ));
+    findings.extend(evaluate_v1_alpha_rules(
+        &facts,
+        &request.analysis_scope,
+        &request.policy,
+    ));
+    apply_policy(&mut findings, &request.policy);
+    sort_findings(&mut findings);
     emit_progress(
         &mut progress,
         "aggregating",
@@ -498,12 +680,20 @@ pub fn scan_with_progress(
         coverage.unresolved.len(),
         "aggregating recurrence clusters and scores",
     );
+    let owners = facts
+        .iter()
+        .map(|fact| (fact.path.clone(), fact.owner.clone()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|(path, owner)| AnalyzedOwner { path, owner })
+        .collect();
 
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
         schema_version: "0.1.0".to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
+        owners,
         coverage,
     })
 }
@@ -578,7 +768,17 @@ pub fn render_markdown(report: &ScanReport) -> String {
     output
 }
 
-fn discover_source_files(root: &Path) -> Result<Vec<PathBuf>, ScanError> {
+struct DiscoveredSources {
+    files: Vec<PathBuf>,
+    total_count: usize,
+    issue: Option<CoverageIssue>,
+}
+
+fn discover_source_files(
+    root: &Path,
+    max_files: usize,
+    max_source_bytes: u64,
+) -> Result<DiscoveredSources, ScanError> {
     fn visit(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
         let entries = fs::read_dir(directory).map_err(|error| {
             ScanError::new(format!("cannot read {}: {error}", directory.display()))
@@ -620,7 +820,58 @@ fn discover_source_files(root: &Path) -> Result<Vec<PathBuf>, ScanError> {
     let mut files = Vec::new();
     visit(root, &mut files)?;
     files.sort();
-    Ok(files)
+    let total_count = files.len();
+    let mut case_folded = BTreeMap::<String, PathBuf>::new();
+    for file in &files {
+        let normalized = normalize_path(root, file).to_lowercase();
+        if let Some(previous) = case_folded.insert(normalized, file.clone()) {
+            return Ok(DiscoveredSources {
+                files: Vec::new(),
+                total_count,
+                issue: Some(CoverageIssue {
+                    path: ".".to_owned(),
+                    reason: "path-case-collision".to_owned(),
+                    detail: format!(
+                        "eligible paths collide under case-insensitive semantics: {} and {}",
+                        normalize_path(root, &previous),
+                        normalize_path(root, file)
+                    ),
+                }),
+            });
+        }
+    }
+    let mut scheduled = Vec::new();
+    let mut scheduled_bytes = 0_u64;
+    let mut observed_bytes = 0_u64;
+    for file in files {
+        let bytes = fs::metadata(&file)
+            .map_err(|error| ScanError::new(format!("cannot inspect {}: {error}", file.display())))?
+            .len();
+        observed_bytes = observed_bytes.saturating_add(bytes);
+        if scheduled.len() < max_files && scheduled_bytes.saturating_add(bytes) <= max_source_bytes
+        {
+            scheduled_bytes = scheduled_bytes.saturating_add(bytes);
+            scheduled.push(file);
+        }
+    }
+    let issue = (scheduled.len() < total_count).then(|| CoverageIssue {
+        path: ".".to_owned(),
+        reason: "resource-budget".to_owned(),
+        detail: format!(
+            "scheduled {}/{} eligible files and {}/{} observed source bytes under limits maxFiles={} maxSourceBytes={}",
+            scheduled.len(),
+            total_count,
+            scheduled_bytes,
+            observed_bytes,
+            max_files,
+            max_source_bytes
+        ),
+    });
+    Ok(DiscoveredSources {
+        files: scheduled,
+        total_count,
+        issue,
+    })
 }
 
 fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<Finding> {
@@ -668,6 +919,7 @@ fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<
             .map(|evidence| u16::from(evidence.weight))
             .sum();
         let score = (signal_score + u16::from(interaction_bonus)).min(100) as u8;
+        let candidate_evidence_digest = evidence_digest(&candidate.evidence, interaction_bonus);
         findings.push(Finding {
             rule_id: RULE_ID.to_owned(),
             contract_version: CONTRACT_VERSION.to_owned(),
@@ -684,6 +936,9 @@ fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<
             score,
             band: score_band(score).to_owned(),
             confidence: "high".to_owned(),
+            evidence_digest: candidate_evidence_digest,
+            policy_disposition: "report".to_owned(),
+            archetypes: Vec::new(),
             explanation:
                 "This decorative shell signature recurs across distinct React component owners."
                     .to_owned(),
@@ -700,6 +955,522 @@ fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<
         ))
     });
     findings
+}
+
+fn activate_effect_stacking(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<Finding> {
+    let mut strongest = BTreeMap::<(String, String), Candidate>::new();
+    for candidate in candidates
+        .into_iter()
+        .filter(|candidate| candidate.signature.len() >= 4)
+    {
+        let key = (candidate.path.clone(), candidate.owner.clone());
+        match strongest.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(candidate);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry)
+                if candidate.signature.len() > entry.get().signature.len() =>
+            {
+                entry.insert(candidate);
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+    strongest
+        .into_values()
+        .map(|candidate| {
+            let signature_key = candidate.signature.join(",");
+            let interaction_bonus = match candidate.signature.len() {
+                4 => 18,
+                5 => 25,
+                _ => 32,
+            };
+            let signal_score: u16 = candidate
+                .evidence
+                .iter()
+                .map(|evidence| u16::from(evidence.weight))
+                .sum();
+            let score = (signal_score + u16::from(interaction_bonus)).min(100) as u8;
+            let candidate_evidence_digest =
+                evidence_digest(&candidate.evidence, interaction_bonus);
+            Finding {
+                rule_id: "effect-stacking".to_owned(),
+                contract_version: "0.1.0-alpha".to_owned(),
+                fingerprint: digest(&format!(
+                    "{analysis_scope}|effect-stacking|{}|{}|{signature_key}|default",
+                    candidate.path, candidate.owner
+                )),
+                cluster_id: digest(&format!(
+                    "effect-stacking|{}|{}|{signature_key}",
+                    candidate.path, candidate.owner
+                )),
+                recurrence_owner_count: 1,
+                path: candidate.path,
+                owner: candidate.owner,
+                line: candidate.line,
+                column: candidate.column,
+                signature: candidate.signature,
+                evidence: candidate.evidence,
+                interaction_bonus,
+                score,
+                band: score_band(score).to_owned(),
+                confidence: "high".to_owned(),
+                evidence_digest: candidate_evidence_digest,
+                policy_disposition: "report".to_owned(),
+                archetypes: Vec::new(),
+                explanation:
+                    "Several high-intensity decorative categories coexist on one reachable element."
+                        .to_owned(),
+                remediation:
+                    "Remove or subordinate effects that do not carry hierarchy or interaction meaning."
+                        .to_owned(),
+            }
+        })
+        .collect()
+}
+
+fn evaluate_v1_alpha_rules(
+    facts: &[ElementFact],
+    analysis_scope: &str,
+    policy: &ScanPolicy,
+) -> Vec<Finding> {
+    let mut grouped = BTreeMap::<(String, String), Vec<&ElementFact>>::new();
+    for fact in facts {
+        grouped
+            .entry((fact.path.clone(), fact.owner.clone()))
+            .or_default()
+            .push(fact);
+    }
+    let mut findings = Vec::new();
+    for owner_facts in grouped.values() {
+        evaluate_decoration_saturation(owner_facts, analysis_scope, &mut findings);
+        evaluate_shape_homogenization(owner_facts, analysis_scope, &mut findings);
+        evaluate_cardification(owner_facts, analysis_scope, &mut findings);
+        evaluate_container_depth(owner_facts, analysis_scope, &mut findings);
+        evaluate_rhythm(owner_facts, analysis_scope, policy, &mut findings);
+        evaluate_template_convergence(owner_facts, analysis_scope, &mut findings);
+    }
+    evaluate_token_drift(facts, analysis_scope, policy, &mut findings);
+    findings
+}
+
+fn evaluate_decoration_saturation(
+    facts: &[&ElementFact],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let styled = facts
+        .iter()
+        .copied()
+        .filter(|fact| fact.eligible_display && !fact.signals.is_empty())
+        .collect::<Vec<_>>();
+    if styled.len() < 4 {
+        return;
+    }
+    let mut occurrences = BTreeMap::<String, Vec<&ElementFact>>::new();
+    for fact in &styled {
+        for signal in &fact.signals {
+            occurrences.entry(signal.clone()).or_default().push(fact);
+        }
+    }
+    for (signal, matching) in occurrences {
+        if matching.len() >= 4 && matching.len() * 100 >= styled.len() * 60 {
+            let score = (40
+                + matching.len().saturating_sub(4) * 5
+                + (matching.len() * 100 / styled.len()).saturating_sub(60) / 2)
+                .min(80) as u8;
+            findings.push(make_finding(
+                "decoration-saturation",
+                analysis_scope,
+                &format!("saturated:{signal}"),
+                &matching,
+                vec![signal],
+                score,
+                20,
+                Vec::new(),
+            ));
+        }
+    }
+}
+
+fn evaluate_shape_homogenization(
+    facts: &[&ElementFact],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let mut shapes = BTreeMap::<String, Vec<&ElementFact>>::new();
+    for fact in facts {
+        if let Some(shape) = &fact.shape {
+            shapes.entry(shape.clone()).or_default().push(fact);
+        }
+    }
+    for (shape, matching) in shapes {
+        let roles = matching
+            .iter()
+            .map(|fact| fact.role.as_str())
+            .collect::<BTreeSet<_>>();
+        if matching.len() >= 4 && roles.len() >= 3 {
+            let score = (45 + roles.len() * 5 + matching.len().saturating_sub(4) * 3).min(82) as u8;
+            findings.push(make_finding(
+                "shape-homogenization",
+                analysis_scope,
+                &format!("shape:{shape}"),
+                &matching,
+                vec![shape],
+                score,
+                15,
+                Vec::new(),
+            ));
+        }
+    }
+}
+
+fn evaluate_cardification(
+    facts: &[&ElementFact],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let cards = facts
+        .iter()
+        .copied()
+        .filter(|fact| fact.eligible_display && fact.card_like)
+        .collect::<Vec<_>>();
+    let nested = cards.iter().any(|fact| fact.generic_depth >= 2);
+    if cards.len() >= 5 || (cards.len() >= 3 && nested) {
+        let score =
+            (42 + cards.len().saturating_sub(3) * 5 + usize::from(nested) * 12).min(85) as u8;
+        findings.push(make_finding(
+            "cardification",
+            analysis_scope,
+            "owner-card-system",
+            &cards,
+            vec!["card-like-container".to_owned()],
+            score,
+            if nested { 12 } else { 0 },
+            Vec::new(),
+        ));
+    }
+}
+
+fn evaluate_container_depth(
+    facts: &[&ElementFact],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let maximum_depth = facts
+        .iter()
+        .map(|fact| fact.generic_depth)
+        .max()
+        .unwrap_or(0);
+    let decorated = facts
+        .iter()
+        .copied()
+        .filter(|fact| !fact.signals.is_empty())
+        .collect::<Vec<_>>();
+    if maximum_depth >= 6 && decorated.len() >= 2 {
+        let score =
+            (45 + maximum_depth.saturating_sub(6) * 5 + decorated.len().saturating_sub(2) * 8)
+                .min(82) as u8;
+        findings.push(make_finding(
+            "generic-container-depth",
+            analysis_scope,
+            "deep-decorative-wrapper-chain",
+            &decorated,
+            vec![
+                format!("generic-depth:{maximum_depth}"),
+                format!("decorative-layers:{}", decorated.len()),
+            ],
+            score,
+            8,
+            Vec::new(),
+        ));
+    }
+}
+
+fn evaluate_rhythm(
+    facts: &[&ElementFact],
+    analysis_scope: &str,
+    policy: &ScanPolicy,
+    findings: &mut Vec<Finding>,
+) {
+    let mut spacing = BTreeMap::<String, Vec<&ElementFact>>::new();
+    for fact in facts.iter().copied().filter(|fact| fact.eligible_display) {
+        for (category, value) in &fact.visual_values {
+            if category == "spacing"
+                && !policy
+                    .approved_values
+                    .get(category)
+                    .is_some_and(|approved| approved.contains(value))
+            {
+                spacing.entry(value.clone()).or_default().push(fact);
+            }
+        }
+    }
+    let denominator = spacing.values().map(Vec::len).sum::<usize>();
+    for (value, matching) in spacing {
+        let roles = matching
+            .iter()
+            .map(|fact| fact.role.as_str())
+            .collect::<BTreeSet<_>>();
+        if matching.len() >= 5
+            && denominator > 0
+            && matching.len() * 100 >= denominator * 80
+            && roles.len() >= 2
+        {
+            let score =
+                (42 + matching.len().saturating_sub(5) * 4 + usize::from(roles.len() >= 3) * 10)
+                    .min(78) as u8;
+            findings.push(make_finding(
+                "rhythm-homogenization",
+                analysis_scope,
+                &format!("spacing:{value}"),
+                &matching,
+                vec![format!("spacing:{value}")],
+                score,
+                10,
+                Vec::new(),
+            ));
+        }
+    }
+}
+
+fn evaluate_template_convergence(
+    facts: &[&ElementFact],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let Some(first) = facts.first() else {
+        return;
+    };
+    let page_name = format!("{} {}", first.path, first.owner).to_ascii_lowercase();
+    let is_page = page_name.contains("page")
+        || page_name.contains("screen")
+        || page_name.contains("view")
+        || page_name.contains("/pages/")
+        || page_name.contains("/routes/");
+    if !is_page {
+        return;
+    }
+    let mut structures = BTreeSet::new();
+    for fact in facts {
+        structures.extend(fact.stock_structures.iter().cloned());
+    }
+    let action_count = facts.iter().filter(|fact| fact.role == "action").count();
+    if action_count >= 2 {
+        structures.insert("paired-cta".to_owned());
+    }
+    if structures.len() < 3 {
+        return;
+    }
+    let archetypes = infer_archetypes(&first.path, &first.owner);
+    let score = (structures.len() * 15
+        + match structures.len() {
+            3 => 10,
+            4 => 18,
+            _ => 25,
+        })
+    .min(100) as u8;
+    for archetype in archetypes {
+        findings.push(make_finding(
+            "template-convergence",
+            analysis_scope,
+            &format!(
+                "{}:{}",
+                archetype,
+                structures.iter().cloned().collect::<Vec<_>>().join(",")
+            ),
+            facts,
+            structures.iter().cloned().collect(),
+            score,
+            10,
+            vec![archetype],
+        ));
+    }
+}
+
+fn evaluate_token_drift(
+    facts: &[ElementFact],
+    analysis_scope: &str,
+    policy: &ScanPolicy,
+    findings: &mut Vec<Finding>,
+) {
+    let mut values = BTreeMap::<(String, String), Vec<&ElementFact>>::new();
+    for fact in facts {
+        for (category, value) in &fact.visual_values {
+            let Some(approved) = policy.approved_values.get(category) else {
+                continue;
+            };
+            if !approved.contains(value) {
+                values
+                    .entry((category.clone(), value.clone()))
+                    .or_default()
+                    .push(fact);
+            }
+        }
+    }
+    for ((category, value), matching) in values {
+        let owners = matching
+            .iter()
+            .map(|fact| (&fact.path, &fact.owner))
+            .collect::<BTreeSet<_>>();
+        if matching.len() < 3 || owners.len() < 2 {
+            continue;
+        }
+        let score = (38 + matching.len().saturating_sub(3) * 5 + owners.len().saturating_sub(1) * 8)
+            .min(78) as u8;
+        let mut by_owner = BTreeMap::<(&str, &str), Vec<&ElementFact>>::new();
+        for fact in matching {
+            by_owner
+                .entry((&fact.path, &fact.owner))
+                .or_default()
+                .push(fact);
+        }
+        for owner_facts in by_owner.into_values() {
+            findings.push(make_finding(
+                "design-token-drift",
+                analysis_scope,
+                &format!("{category}:{value}"),
+                &owner_facts,
+                vec![format!("{category}:{value}")],
+                score,
+                8,
+                Vec::new(),
+            ));
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_finding(
+    rule_id: &str,
+    analysis_scope: &str,
+    occurrence_key: &str,
+    facts: &[&ElementFact],
+    signature: Vec<String>,
+    score: u8,
+    interaction_bonus: u8,
+    archetypes: Vec<String>,
+) -> Finding {
+    let first = facts
+        .iter()
+        .min_by_key(|fact| (fact.line, fact.column))
+        .expect("rule match requires evidence");
+    let definition = rule_catalog()
+        .iter()
+        .find(|definition| definition.id == rule_id)
+        .expect("catalog contains every implemented rule");
+    let recurrence_owner_count = facts
+        .iter()
+        .map(|fact| (&fact.path, &fact.owner))
+        .collect::<BTreeSet<_>>()
+        .len();
+    let evidence = signature
+        .iter()
+        .map(|signal_id| Evidence {
+            signal_id: signal_id.clone(),
+            weight: (score / signature.len().max(1) as u8).max(1),
+            snippet: first.snippet.clone(),
+        })
+        .collect::<Vec<_>>();
+    Finding {
+        rule_id: rule_id.to_owned(),
+        contract_version: definition.contract_version.to_owned(),
+        fingerprint: digest(&format!(
+            "{analysis_scope}|{rule_id}|{}|{}|{occurrence_key}|default",
+            first.path, first.owner
+        )),
+        cluster_id: digest(&format!("{rule_id}|{occurrence_key}")),
+        recurrence_owner_count,
+        path: first.path.clone(),
+        owner: first.owner.clone(),
+        line: first.line,
+        column: first.column,
+        signature,
+        evidence_digest: evidence_digest(&evidence, interaction_bonus),
+        evidence,
+        interaction_bonus,
+        score,
+        band: score_band(score).to_owned(),
+        confidence: "high".to_owned(),
+        policy_disposition: "report".to_owned(),
+        archetypes,
+        explanation: definition.summary.to_owned(),
+        remediation: definition.remediation.to_owned(),
+    }
+}
+
+fn infer_archetypes(path: &str, owner: &str) -> Vec<String> {
+    let searchable = format!("{path} {owner}").to_ascii_lowercase();
+    let mut matches = page_archetype_catalog()
+        .iter()
+        .filter(|archetype| {
+            archetype
+                .keywords
+                .iter()
+                .any(|keyword| searchable.contains(*keyword))
+        })
+        .map(|archetype| archetype.id.to_owned())
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        matches.push("unknown".to_owned());
+    }
+    matches
+}
+
+fn apply_policy(findings: &mut [Finding], policy: &ScanPolicy) {
+    for finding in findings {
+        let primitive = (finding.path.clone(), finding.owner.clone());
+        let suppression = (
+            finding.rule_id.clone(),
+            finding.path.clone(),
+            finding.owner.clone(),
+        );
+        finding.policy_disposition = if policy.approved_primitives.contains(&primitive)
+            || policy.suppressions.contains(&suppression)
+        {
+            "suppress".to_owned()
+        } else {
+            let configured = policy
+                .rule_dispositions
+                .get(&finding.rule_id)
+                .cloned()
+                .unwrap_or_else(|| "report".to_owned());
+            let below_score_floor = policy
+                .rule_minimum_scores
+                .get(&finding.rule_id)
+                .is_some_and(|minimum| finding.score < *minimum);
+            let below_confidence_floor = policy
+                .rule_minimum_confidences
+                .get(&finding.rule_id)
+                .is_some_and(|minimum| {
+                    confidence_rank(&finding.confidence) < confidence_rank(minimum)
+                });
+            if configured == "enforce" && (below_score_floor || below_confidence_floor) {
+                "report".to_owned()
+            } else {
+                configured
+            }
+        };
+    }
+}
+
+fn confidence_rank(confidence: &str) -> u8 {
+    match confidence {
+        "high" => 2,
+        "medium" => 1,
+        _ => 0,
+    }
+}
+
+fn sort_findings(findings: &mut [Finding]) {
+    findings.sort_by(|left, right| {
+        (&left.path, &left.owner, &left.rule_id, &left.signature).cmp(&(
+            &right.path,
+            &right.owner,
+            &right.rule_id,
+            &right.signature,
+        ))
+    });
 }
 
 fn collect_class_signals(classes: &str, signals: &mut BTreeMap<&'static str, u8>) {
@@ -737,6 +1508,89 @@ fn collect_class_signals(classes: &str, signals: &mut BTreeMap<&'static str, u8>
     if uniform_padding || (horizontal && vertical) {
         signals.insert("generous-padding", 12);
     }
+}
+
+fn collect_visual_values(tokens: &[String]) -> Vec<(String, String)> {
+    let mut values = BTreeSet::new();
+    for token in tokens {
+        for prefix in ["p-", "px-", "py-", "pt-", "pr-", "pb-", "pl-", "gap-"] {
+            if let Some(value) = token.strip_prefix(prefix)
+                && !value.is_empty()
+                && !value.contains(':')
+            {
+                values.insert(("spacing".to_owned(), value.to_owned()));
+            }
+        }
+        if let Some(value) = token.strip_prefix("rounded-")
+            && !value.is_empty()
+            && !value.contains(':')
+        {
+            values.insert(("radius".to_owned(), value.to_owned()));
+        }
+        if let Some(value) = token.strip_prefix("shadow-")
+            && !value.is_empty()
+            && !value.contains(':')
+        {
+            values.insert(("shadow".to_owned(), value.to_owned()));
+        }
+    }
+    values.into_iter().collect()
+}
+
+fn structural_role(tag: &str) -> &'static str {
+    match tag {
+        "nav" => "navigation",
+        "a" | "button" => "action",
+        "input" | "select" | "textarea" | "label" | "form" => "form",
+        "img" | "picture" | "video" | "figure" => "media",
+        "section" => "section",
+        "article" => "content",
+        "header" | "footer" | "aside" | "main" => "landmark",
+        "h1" | "h2" | "h3" | "p" | "ul" | "ol" | "li" => "content",
+        _ => "container",
+    }
+}
+
+fn collect_stock_structures(
+    tag: &str,
+    tokens: &[String],
+    signals: &[String],
+    child_element_count: usize,
+) -> Vec<String> {
+    let has = |expected: &str| tokens.iter().any(|token| token == expected);
+    let mut structures = BTreeSet::new();
+    if has("rounded-full") && (has("text-xs") || has("uppercase")) {
+        structures.insert("eyebrow-pill");
+    }
+    if matches!(tag, "main" | "section") && has("text-center") {
+        structures.insert("centered-hero");
+    }
+    if matches!(tag, "h1" | "h2")
+        && (signals.iter().any(|signal| signal == "gradient-surface") || has("bg-clip-text"))
+    {
+        structures.insert("gradient-heading");
+    }
+    if matches!(tag, "img" | "picture")
+        && signals.iter().any(|signal| {
+            matches!(
+                signal.as_str(),
+                "large-shadow" | "decorative-outline" | "extreme-radius"
+            )
+        })
+    {
+        structures.insert("framed-product-media");
+    }
+    if has("grid")
+        && tokens
+            .iter()
+            .any(|token| token.starts_with("grid-cols-") || token.starts_with("col-span-"))
+    {
+        structures.insert("bento-grid");
+        if child_element_count >= 3 {
+            structures.insert("three-card-features");
+        }
+    }
+    structures.into_iter().map(str::to_owned).collect()
 }
 
 fn collect_inline_signals(
@@ -934,4 +1788,13 @@ fn escape_inline_code(value: &str) -> String {
 fn digest(value: &str) -> String {
     let hash = Sha256::digest(value.as_bytes());
     format!("{hash:x}")
+}
+
+fn evidence_digest(evidence: &[Evidence], interaction_bonus: u8) -> String {
+    let normalized = evidence
+        .iter()
+        .map(|item| format!("{}:{}", item.signal_id, item.weight))
+        .collect::<Vec<_>>()
+        .join("|");
+    digest(&format!("{normalized}|interaction:{interaction_bonus}"))
 }

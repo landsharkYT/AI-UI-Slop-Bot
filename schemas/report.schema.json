@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-ui-slop.dev/schema/report/1",
+  "title": "AI UI Slop Canonical Report",
+  "type": "object",
+  "required": [
+    "artifactType",
+    "schemaVersion",
+    "toolVersion",
+    "rulePackVersion",
+    "summary",
+    "scopes"
+  ],
+  "properties": {
+    "artifactType": { "const": "ai-ui-slop.canonical-report" },
+    "schemaVersion": { "const": "1" },
+    "toolVersion": { "type": "string" },
+    "rulePackVersion": { "type": "string" },
+    "fingerprintAlgorithmVersion": { "type": "string" },
+    "evidenceDigestAlgorithmVersion": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "required": ["outcome", "scopeCount", "findingCount"]
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "root",
+          "status",
+          "policyFingerprint",
+          "coverage",
+          "routes",
+          "componentProfiles",
+          "findings",
+          "repositoryProfile",
+          "diagnostics"
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}
