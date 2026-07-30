@@ -64,6 +64,8 @@ The public seam tests cover discovery and symlinks, reachable-state class compos
 
 Shot 7 completes the planned implementation passes. Full V1 validation still requires the committed reference-runner workloads, hosted release smoke tests, authenticated release assets, broader fuzz/mutation evidence, and blind customer calibration. See [Shot 7](docs/shot-7.md), its [local evidence](docs/evidence/SHOT7-LOCAL.md), and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
 
+Design rationale and counterexample provenance from *Refactoring UI* are documented in the [reference traceability matrix](docs/references/refactoring-ui-traceability.md). The reference guides explanations and fixtures; it is not a machine-enforceable taste specification.
+
 ## License
 
 Original project code and documentation are available under either the [MIT License](LICENSE-MIT) or [Apache License 2.0](LICENSE-APACHE), at your option.

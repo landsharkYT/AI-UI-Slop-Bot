@@ -11,6 +11,8 @@ These contracts authorize conservative V1-shaped matchers for Shot 1. They make 
 
 The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) remains authoritative for that rule.
 
+Design rationale and counterexample provenance are recorded in the [Refactoring UI traceability matrix](../references/refactoring-ui-traceability.md). That matrix informs explanations and fixture boundaries; this document remains the machine-enforceable contract.
+
 ## Shared contract
 
 - The actionable owner is the nearest supported named React function or arrow-function component.
@@ -24,6 +26,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Effect Stacking
 
+- Reference rationale: purposeful elevation and finishing treatments should communicate hierarchy; no individual treatment is prohibited.
 - Rule ID: `effect-stacking`; contract version: `0.1.0-alpha`.
 - Entity: one eligible JSX display element.
 - Activation: at least four distinct supported high-intensity decorative categories on the same element.
@@ -36,6 +39,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Decoration Saturation
 
+- Reference rationale: visual emphasis loses meaning when the same treatment is applied everywhere.
 - Rule ID: `decoration-saturation`; contract version: `0.1.0-alpha`.
 - Entity: one component owner and one decorative signal category.
 - Activation: the category occurs on at least four eligible display elements and on at least 60% of that owner's eligible display elements.
@@ -47,6 +51,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Shape Homogenization
 
+- Reference rationale: interface personality and hierarchy require role-sensitive choices, not one silhouette on every role.
 - Rule ID: `shape-homogenization`; contract version: `0.1.0-alpha`.
 - Entity: one component owner and one conspicuous shape (`pill` or `extreme-rounded`).
 - Activation: the shape occurs at least four times across at least three distinct structural roles such as navigation, action, content, media, form, or generic container.
@@ -58,6 +63,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Cardification
 
+- Reference rationale: spacing, contrast, and grouping can communicate structure without surrounding every region with equivalent chrome.
 - Rule ID: `cardification`; contract version: `0.1.0-alpha`.
 - Entity: one component owner.
 - Activation: either at least five card-like decorated display containers, or at least three with a nested card-like depth of two or more.
@@ -70,6 +76,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Generic Container Depth
 
+- Reference rationale: layout guidance informs the remediation, while wrapper depth remains an independently derived source-analysis signal.
 - Rule ID: `generic-container-depth`; contract version: `0.1.0-alpha`.
 - Entity: one component owner.
 - Activation: a non-semantic `div`/`span` wrapper chain reaches depth six and the owner contains at least two supported decorative layers.
@@ -81,6 +88,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Design Token Drift
 
+- Reference rationale: deliberate spacing, sizing, type, and color systems reduce arbitrary choices; only an explicit House Style scale is enforceable.
 - Rule ID: `design-token-drift`; contract version: `0.1.0-alpha`.
 - Entity: one normalized visual value across an Analysis Scope, actionable at each participating owner.
 - Activation: the same unapproved spacing, radius, shadow, or color value occurs at least three times across at least two owners and is outside a non-empty approved House Style scale for that category.
@@ -93,6 +101,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Rhythm Homogenization
 
+- Reference rationale: spacing should express hierarchy and grouping rather than flatten different roles into one repeated cadence.
 - Rule ID: `rhythm-homogenization`; contract version: `0.1.0-alpha`.
 - Entity: one component owner and one spacing value.
 - Activation: the value appears on at least five eligible display elements, represents at least 80% of resolved spacing-bearing elements, and spans at least two structural roles.
@@ -104,6 +113,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Template Convergence
 
+- Reference rationale: starting from product purpose and choosing a deliberate personality protects conventional structures from becoming an interchangeable formula.
 - Rule ID: `template-convergence`; contract version: `0.1.0-alpha`.
 - Entity: one detected route/page owner evaluated independently for every applicable Page Archetype. `App` is a page owner when used as a conventional root SPA boundary.
 - Versioned route/archetype structural signals remain `eyebrow-pill`, `centered-hero`, `gradient-heading`, `paired-cta`, `framed-product-media`, `bento-grid`, and `three-card-features`. Rule evaluation also accepts the plain-CSS semantic equivalents `eyebrow-label` and `repeated-panel-grid`; these two internal evidence IDs are not configurable custom-archetype signals.
@@ -117,6 +127,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Framework Default Convergence
 
+- Reference rationale: limiting choices should produce a deliberate product system, not the same framework-default recipe across unrelated products.
 - Rule ID: `framework-default-convergence`; contract version: `0.1.0-alpha`.
 - Entity: one Analysis Scope, actionable at each participating component owner.
 - Activation: at least four stock framework signals recur across at least three owners; every participating owner has at least four of those signals. The recurring set must include a neutral framework palette and framework rounding.
@@ -129,6 +140,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 
 ## Control Surface Homogenization
 
+- Reference rationale: hierarchy can use spacing, contrast, and selective dividers; outlining every role with the same compact chrome creates clutter and sameness.
 - Rule ID: `control-surface-homogenization`; contract version: `0.1.0-alpha`.
 - Entity: one component owner.
 - Activation: at least eight statically styled elements span at least three structural roles, with at least three control-surface traits each recurring four times. Compact typography and outlined chrome must be among the saturated traits, and every participating element has at least three saturated traits.

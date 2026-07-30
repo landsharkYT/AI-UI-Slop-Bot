@@ -1,0 +1,15 @@
+{
+  "fixtureVersion": "1",
+  "provenance": "independently-authored",
+  "license": "MIT OR Apache-2.0",
+  "referenceScope": "Official public Refactoring UI table of contents and previews only",
+  "cases": [
+    "one useful divider",
+    "one focal elevated surface",
+    "context-dependent typography",
+    "explicit data labels",
+    "one rounded compact control"
+  ],
+  "expectedFindingCount": 0,
+  "rationale": "A book tactic or apparent violation in isolation is not evidence of aesthetic convergence."
+}

@@ -1,6 +1,6 @@
 # Requirements Verification Matrix
 
-Source: `requirements.md` SHA-256 `dac879ee07bc79ec67fa5e94db82b7aed46bacfedabca77958231f9bbe7fdfcb`
+Source: `requirements.md` SHA-256 `08b151cf56512041b93899527bd351ba2a9a63ff5d42c8be6e4f71e34724df0d`
 Generated rows: 390
 
 Every evidence record is pending until the named verification runs and the durable record links its raw fixtures, logs, labels, benchmark output, or release artifacts. Shared evidence may cover several requirements only when it cites every covered ID.
@@ -182,8 +182,8 @@ Every evidence record is pending until the named verification runs and the durab
 | `QUALITY-013` | Full V1 | Quality gate or documented review | `docs/evidence/QUALITY-013.md` | Compatibility: Unsupported syntax or configuration shall produce actionable diagnostics. | pending |
 | `QUALITY-014` | Full V1 | Quality gate or documented review | `docs/evidence/QUALITY-014.md` | Evolvability: Rule identifiers and JSON schema changes shall be versioned so downstream agents can rely on them. | pending |
 | `QUALITY-015` | Full V1 | Quality gate or documented review | `docs/evidence/QUALITY-015.md` | Upgrade transparency: Rule-pack changes that affect scores or baselines shall be distinguishable from schema and binary changes and shall... | pending |
-| `REFERENCE-001` | Validated MVP | Source and licensing review | `docs/evidence/REFERENCE-001.md` | The book shall not be treated as a machine-enforceable specification or the sole definition of good UI. A tactic becomes a default rule o... | pending |
-| `REFERENCE-002` | Validated MVP | Source and licensing review | `docs/evidence/REFERENCE-002.md` | The repository shall cite the source of derived rule rationale without copying substantial proprietary text. | pending |
+| `REFERENCE-001` | Validated MVP | Source and licensing review | `docs/evidence/REFERENCE-001.md` | The book shall not be treated as a machine-enforceable specification or the sole definition of good UI. A tactic becomes a default rule o... | local-pass |
+| `REFERENCE-002` | Validated MVP | Source and licensing review | `docs/evidence/REFERENCE-002.md` | The repository shall cite the source of derived rule rationale without copying substantial proprietary text. | local-pass |
 | `REPORT-001` | Validated MVP | JSON Schema and golden report test | `docs/evidence/REPORT-001.md linking test or fixture manifest keyed by REPORT-001` | Versioned JSON shall be the canonical machine-readable contract. The bot shall also generate a Markdown Refactoring Brief from the same a... | pending |
 | `REPORT-002` | Validated MVP | JSON Schema and golden report test | `docs/evidence/REPORT-002.md linking test or fixture manifest keyed by REPORT-002` | Default artifact locations shall be: | pending |
 | `REPORT-003` | Validated MVP | JSON Schema and golden report test | `docs/evidence/REPORT-003.md linking test or fixture manifest keyed by REPORT-003` | The JSON shall contain, at minimum: | pending |

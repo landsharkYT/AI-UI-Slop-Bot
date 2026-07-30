@@ -14,6 +14,8 @@ Detect the repeated use of the same over-decorated display-container treatment a
 
 This contract is deliberately narrow and disposable. It is the executable hypothesis for the Discovery Prototype, not the final MVP rule.
 
+The [Refactoring UI traceability matrix](../references/refactoring-ui-traceability.md) informs its purposeful-elevation counterexamples and hierarchy-oriented remediation. The reference does not prohibit any individual effect and does not alter the activation contract below.
+
 ## Analysis entity and scope
 
 - The analysis unit is one JSX element owned by the nearest named React function or named arrow-function component in a `.jsx` or `.tsx` file.

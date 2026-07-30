@@ -1133,6 +1133,8 @@ Threshold changes should report their effect on the corpus. Real-world repositor
 
 *Refactoring UI* by Adam Wathan and Steve Schoger should be a major source for candidate heuristics, counterexamples, remediation language, and fixture design. Its practical, developer-oriented tactics fit this scanner's intended audience.
 
+The maintained mapping from reference principles to rule evidence, protected counterexamples, remediation guidance, and human-only judgment is [the Refactoring UI traceability matrix](docs/references/refactoring-ui-traceability.md).
+
 **[REFERENCE-001]** The book shall not be treated as a machine-enforceable specification or the sole definition of good UI. A tactic becomes a default rule only after it can be translated into observable source evidence, bounded by counterexamples, and validated against representative repositories. The project shall distinguish:
 
 - principles that inform explanations and remediation;
