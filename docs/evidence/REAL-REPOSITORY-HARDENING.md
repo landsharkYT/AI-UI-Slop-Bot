@@ -54,3 +54,11 @@ The repeated pass produced:
 The remaining OSM graph miss is an authored worker runtime expression rather than generated framework noise. The original repositories were not modified; initialization and scans ran on disposable copies.
 
 After the follow-up changes, the deterministic 500-file, 500,500-line release benchmark completed in 147 ms with a 14,400 KiB peak RSS. The 20-pair progress trial measured a -0.04% median overhead and passed the 2% median gate.
+
+## Shot A detector recall follow-up
+
+Date: 2026-07-30
+
+Rule pack `1.0.0-beta.3` recognizes conventional root SPAs, restrained plain-CSS cards and structures, and bounded page composition through uniquely resolved local component owners. The four-repository pass now keeps ReactPDFRedactor and the OSM utility at zero Findings, raises WebsiteHelper from a false-negative zero to ten page/view Findings, and adds three page-pattern Findings to EvacLogix alongside its ten existing repeated-shell Findings.
+
+The first Shot A calibration caught and removed structural double-counting for three-column work grids. Full fixtures, bounds, coverage, and result counts are recorded in [SHOT-A-DETECTOR-RECALL.md](SHOT-A-DETECTOR-RECALL.md).

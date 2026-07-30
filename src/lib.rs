@@ -99,6 +99,8 @@ pub struct ScanPolicy {
     pub max_wall_time_ms: u64,
     pub max_reachable_states: usize,
     pub semantic_class_signals: BTreeMap<String, BTreeSet<String>>,
+    pub semantic_class_structures: BTreeMap<String, BTreeSet<String>>,
+    pub semantic_card_classes: BTreeSet<String>,
 }
 
 impl Default for ScanPolicy {
@@ -132,6 +134,8 @@ impl Default for ScanPolicy {
             max_wall_time_ms: 0,
             max_reachable_states: 256,
             semantic_class_signals: BTreeMap::new(),
+            semantic_class_structures: BTreeMap::new(),
+            semantic_card_classes: BTreeSet::new(),
         }
     }
 }
@@ -286,6 +290,13 @@ struct ElementFact {
     reachable_state: String,
 }
 
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+struct RenderEdge {
+    parent_path: String,
+    parent_owner: String,
+    child_owner: String,
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedClassState {
     id: String,
@@ -332,6 +343,9 @@ struct CandidateVisitor<'a> {
     cva_bindings: BTreeMap<String, CvaBinding>,
     max_reachable_states: usize,
     semantic_class_signals: &'a BTreeMap<String, BTreeSet<String>>,
+    semantic_class_structures: &'a BTreeMap<String, BTreeSet<String>>,
+    semantic_card_classes: &'a BTreeSet<String>,
+    render_edges: Vec<RenderEdge>,
     ownership_diagnostics: Vec<(String, String)>,
 }
 
@@ -563,19 +577,29 @@ impl<'a> CandidateVisitor<'a> {
             } else {
                 None
             };
-            let card_like = signature.iter().any(|signal| signal == "generous-padding")
-                && signature.iter().any(|signal| {
-                    matches!(
-                        signal.as_str(),
-                        "extreme-radius"
-                            | "gradient-surface"
-                            | "large-shadow"
-                            | "decorative-outline"
-                            | "backdrop-treatment"
-                    )
-                });
-            let stock_structures =
+            let card_like = class_tokens
+                .iter()
+                .any(|token| self.semantic_card_classes.contains(token))
+                || (signature.iter().any(|signal| signal == "generous-padding")
+                    && signature.iter().any(|signal| {
+                        matches!(
+                            signal.as_str(),
+                            "extreme-radius"
+                                | "gradient-surface"
+                                | "large-shadow"
+                                | "decorative-outline"
+                                | "backdrop-treatment"
+                        )
+                    }));
+            let mut stock_structures =
                 collect_stock_structures(tag, &class_tokens, &signature, child_element_count);
+            for token in &class_tokens {
+                if let Some(configured) = self.semantic_class_structures.get(token) {
+                    stock_structures.extend(configured.iter().cloned());
+                }
+            }
+            stock_structures.sort();
+            stock_structures.dedup();
             self.facts.push(ElementFact {
                 path: self.path.to_owned(),
                 owner: owner.name.to_owned(),
@@ -1394,6 +1418,16 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
             .get_identifier_name()
             .map(|name| name.to_string())
             .unwrap_or_default();
+        if is_component_name(&tag)
+            && let Some(owner) = self.owners.last()
+            && owner.name != tag
+        {
+            self.render_edges.push(RenderEdge {
+                parent_path: self.path.to_owned(),
+                parent_owner: owner.name.to_owned(),
+                child_owner: tag.clone(),
+            });
+        }
         let is_dialog = tag == "dialog";
         let previous_depth = self.generic_depth;
         self.generic_depth = if matches!(tag.as_str(), "div" | "span") {
@@ -1477,6 +1511,7 @@ pub fn scan_with_progress(
     coverage.unresolved.extend(discovery.issues);
     let mut candidates = Vec::new();
     let mut facts = Vec::new();
+    let mut render_edges = Vec::new();
 
     let file_total = discovery.files.len();
     for (index, file) in discovery.files.into_iter().enumerate() {
@@ -1620,6 +1655,7 @@ pub fn scan_with_progress(
             ownership_diagnostics,
             style_expressions_total,
             style_expressions_resolved,
+            file_render_edges,
         ) = {
             let mut visitor = CandidateVisitor {
                 source: &source,
@@ -1642,6 +1678,9 @@ pub fn scan_with_progress(
                 cva_bindings: BTreeMap::new(),
                 max_reachable_states: request.policy.max_reachable_states,
                 semantic_class_signals: &request.policy.semantic_class_signals,
+                semantic_class_structures: &request.policy.semantic_class_structures,
+                semantic_card_classes: &request.policy.semantic_card_classes,
+                render_edges: Vec::new(),
                 ownership_diagnostics: Vec::new(),
             };
             visitor.visit_program(&parsed.program);
@@ -1654,6 +1693,7 @@ pub fn scan_with_progress(
                 visitor.ownership_diagnostics,
                 visitor.style_expressions_total,
                 visitor.style_expressions_resolved,
+                visitor.render_edges,
             )
         };
         if unresolved_dynamic_style > 0 {
@@ -1699,6 +1739,7 @@ pub fn scan_with_progress(
             );
         candidates.extend(file_candidates);
         facts.extend(file_facts);
+        render_edges.extend(file_render_edges);
         coverage.files_analyzed += 1;
         coverage.style_expressions_total += style_expressions_total;
         coverage.style_expressions_resolved += style_expressions_resolved;
@@ -1738,6 +1779,7 @@ pub fn scan_with_progress(
     ));
     findings.extend(evaluate_v1_alpha_rules(
         &facts,
+        &render_edges,
         &request.analysis_scope,
         &request.policy,
     ));
@@ -2391,6 +2433,7 @@ fn activate_effect_stacking(candidates: Vec<Candidate>, analysis_scope: &str) ->
 
 fn evaluate_v1_alpha_rules(
     facts: &[ElementFact],
+    render_edges: &[RenderEdge],
     analysis_scope: &str,
     policy: &ScanPolicy,
 ) -> Vec<Finding> {
@@ -2414,8 +2457,126 @@ fn evaluate_v1_alpha_rules(
         evaluate_rhythm(owner_facts, analysis_scope, policy, &mut findings);
         evaluate_template_convergence(owner_facts, analysis_scope, &mut findings);
     }
+    evaluate_composed_page_rules(facts, render_edges, analysis_scope, &mut findings);
     evaluate_token_drift(facts, analysis_scope, policy, &mut findings);
     findings
+}
+
+fn evaluate_composed_page_rules(
+    facts: &[ElementFact],
+    render_edges: &[RenderEdge],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    const MAX_COMPOSITION_DEPTH: usize = 8;
+    const MAX_COMPOSED_OWNERS: usize = 64;
+    const MAX_COMPOSED_FACTS: usize = 512;
+
+    let mut by_owner = BTreeMap::<(String, String), Vec<&ElementFact>>::new();
+    let mut owner_names = BTreeMap::<String, Vec<(String, String)>>::new();
+    for fact in facts {
+        let key = (fact.path.clone(), fact.owner.clone());
+        by_owner.entry(key.clone()).or_default().push(fact);
+        let keys = owner_names.entry(fact.owner.clone()).or_default();
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    let mut children = BTreeMap::<(String, String), BTreeSet<String>>::new();
+    for edge in render_edges {
+        children
+            .entry((edge.parent_path.clone(), edge.parent_owner.clone()))
+            .or_default()
+            .insert(edge.child_owner.clone());
+    }
+
+    let page_keys = by_owner
+        .keys()
+        .filter(|(path, owner)| is_page_owner(path, owner))
+        .cloned()
+        .collect::<Vec<_>>();
+    for page_key in page_keys {
+        let Some(page_facts) = by_owner.get(&page_key) else {
+            continue;
+        };
+        let Some(anchor) = page_facts
+            .iter()
+            .copied()
+            .min_by_key(|fact| (fact.line, fact.column))
+        else {
+            continue;
+        };
+        let mut visited = BTreeSet::from([page_key.clone()]);
+        let mut frontier = vec![page_key.clone()];
+        for _ in 0..MAX_COMPOSITION_DEPTH {
+            let mut next = Vec::new();
+            for parent in frontier {
+                for child_name in children.get(&parent).into_iter().flatten() {
+                    let Some(keys) = owner_names.get(child_name) else {
+                        continue;
+                    };
+                    if keys.len() != 1 {
+                        continue;
+                    }
+                    let key = keys[0].clone();
+                    if visited.len() >= MAX_COMPOSED_OWNERS {
+                        break;
+                    }
+                    if visited.insert(key.clone()) {
+                        next.push(key);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+        if visited.len() == 1 {
+            continue;
+        }
+
+        let mut composed = Vec::new();
+        for key in &visited {
+            for fact in by_owner.get(key).into_iter().flatten() {
+                if composed.len() >= MAX_COMPOSED_FACTS {
+                    break;
+                }
+                let mut retargeted = (*fact).clone();
+                retargeted.path = page_key.0.clone();
+                retargeted.owner = page_key.1.clone();
+                retargeted.line = anchor.line;
+                retargeted.column = anchor.column;
+                retargeted.reachable_state = anchor.reachable_state.clone();
+                composed.push(retargeted);
+            }
+        }
+        let references = composed.iter().collect::<Vec<_>>();
+        let mut composed_findings = Vec::new();
+        evaluate_cardification(&references, analysis_scope, &mut composed_findings);
+        evaluate_template_convergence(&references, analysis_scope, &mut composed_findings);
+        for finding in composed_findings {
+            let duplicate = findings.iter().any(|existing| {
+                existing.rule_id == finding.rule_id
+                    && existing.path == finding.path
+                    && existing.owner == finding.owner
+                    && existing.reachable_state == finding.reachable_state
+            });
+            if !duplicate {
+                findings.push(finding);
+            }
+        }
+    }
+}
+
+fn is_page_owner(path: &str, owner: &str) -> bool {
+    let page_name = format!("{path} {owner}").to_ascii_lowercase();
+    page_name.contains("page")
+        || page_name.contains("screen")
+        || page_name.contains("view")
+        || page_name.contains("/pages/")
+        || page_name.contains("/routes/")
+        || owner == "App"
 }
 
 fn evaluate_decoration_saturation(
@@ -2606,13 +2767,7 @@ fn evaluate_template_convergence(
     let Some(first) = facts.first() else {
         return;
     };
-    let page_name = format!("{} {}", first.path, first.owner).to_ascii_lowercase();
-    let is_page = page_name.contains("page")
-        || page_name.contains("screen")
-        || page_name.contains("view")
-        || page_name.contains("/pages/")
-        || page_name.contains("/routes/");
-    if !is_page {
+    if !is_page_owner(&first.path, &first.owner) {
         return;
     }
     let mut structures = BTreeSet::new();

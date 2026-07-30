@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at the **post-Shot 7 V1 implementation candidate** (`0.7.2`): the locally implementable product and hardening seams are represented end to end, followed by real-repository accuracy passes. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
+The repository is at the **post-Shot 7 V1 implementation candidate** (`0.8.0`): the locally implementable product and hardening seams are represented end to end, followed by real-repository accuracy passes. Customer calibration, reference-runner performance, hosted platform qualification, and authenticated release validation remain open, so it must not yet be presented as Validated MVP or Full V1.
 
 ## Run it
 
@@ -16,9 +16,10 @@ The scan:
 - analyzes named function and arrow-function components in `.jsx` and `.tsx` with Oxc;
 - resolves literal and repository-local constant Tailwind `className` strings, bounded CVA defaults/static selections/compound variants, compatible theme states, safely interpretable arbitrary values, and literal/shared static inline-style objects;
 - resolves configured, manifest, and lockfile Tailwind versions plus bounded recursive v4 CSS-first sources without importing or executing target code;
+- recognizes restrained plain-CSS card and layout semantics independently of class naming, and composes page evidence through uniquely resolved local render edges under explicit depth, owner, and fact ceilings;
 - honors the applicable checkout or Trusted Policy `.gitignore`, deduplicates internal source symlinks, and reports external symlinks as coverage loss;
 - resolves relative imports, `tsconfig` path aliases, barrels, and static lazy imports into the typed graph;
-- identifies Next App Router, Next Pages Router, configured, and static React Router boundaries;
+- identifies Next App Router, Next Pages Router, configured, static React Router, and conventional React root-SPA boundaries;
 - evaluates the complete nine-rule alpha pack and all fourteen built-in Page Archetypes;
 - supports explicit House Style values/primitives, narrow Suppressions, dispositions, configured routes, safe `unknown`, and declarative custom archetypes;
 - produces Finding, Component, and Repository AI Slop Scores without blending scopes;
@@ -56,7 +57,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
 ```
 
-The public seam tests cover discovery and symlinks, reachable-state class composition, shared static styles, typed repository graphs and aliases, route adapters, Trusted Policy, resource ceilings, hostile filesystem and Markdown inputs, baseline migration and review metadata, parallel determinism, the nine rule paths, Page Archetypes, command lifecycles, progress, and report artifacts.
+The public seam tests cover discovery and symlinks, reachable-state class composition, shared static styles, semantic plain-CSS structures, bounded page composition, typed repository graphs and aliases, root-SPA and framework route adapters, Trusted Policy, resource ceilings, hostile filesystem and Markdown inputs, baseline migration and review metadata, parallel determinism, the nine rule paths, Page Archetypes, command lifecycles, progress, and report artifacts.
 
 ## Validation still required
 

@@ -32,6 +32,8 @@ pub(crate) struct StyleRequest<'a> {
 pub(crate) struct StyleInspection {
     pub report: StyleAdapterReport,
     pub semantic_utilities: BTreeMap<String, BTreeSet<String>>,
+    pub semantic_structures: BTreeMap<String, BTreeSet<String>>,
+    pub semantic_cards: BTreeSet<String>,
 }
 
 pub(crate) fn inspect(request: StyleRequest<'_>) -> Result<StyleInspection, String> {
@@ -55,6 +57,8 @@ struct StyleAnalysis<'a> {
     resolved_configuration_values: u64,
     custom_variants: BTreeSet<String>,
     semantic_utilities: BTreeMap<String, BTreeSet<String>>,
+    semantic_structures: BTreeMap<String, BTreeSet<String>>,
+    semantic_cards: BTreeSet<String>,
     plain_css_sources: Vec<(String, String)>,
 }
 
@@ -74,6 +78,8 @@ impl<'a> StyleAnalysis<'a> {
             resolved_configuration_values: 0,
             custom_variants: BTreeSet::new(),
             semantic_utilities: BTreeMap::new(),
+            semantic_structures: BTreeMap::new(),
+            semantic_cards: BTreeSet::new(),
             plain_css_sources: Vec::new(),
         }
     }
@@ -396,6 +402,8 @@ impl<'a> StyleAnalysis<'a> {
                 source,
                 &custom_properties,
                 &mut self.semantic_utilities,
+                &mut self.semantic_structures,
+                &mut self.semantic_cards,
             );
             if outcome.unresolved_selectors {
                 self.unresolved.insert(format!(
@@ -408,7 +416,13 @@ impl<'a> StyleAnalysis<'a> {
                 ));
             }
         }
-        let semantic_utilities_resolved = self.semantic_utilities.len() as u64;
+        let semantic_utilities_resolved = self
+            .semantic_utilities
+            .keys()
+            .chain(self.semantic_structures.keys())
+            .chain(self.semantic_cards.iter())
+            .collect::<BTreeSet<_>>()
+            .len() as u64;
         StyleInspection {
             report: StyleAdapterReport {
                 tailwind_version: self.version,
@@ -422,6 +436,8 @@ impl<'a> StyleAnalysis<'a> {
                 custom_variants: self.custom_variants.into_iter().collect(),
             },
             semantic_utilities: self.semantic_utilities,
+            semantic_structures: self.semantic_structures,
+            semantic_cards: self.semantic_cards,
         }
     }
 }
@@ -549,6 +565,8 @@ fn collect_plain_css_semantic_classes(
     source: &str,
     custom_properties: &BTreeMap<String, BTreeSet<String>>,
     classes: &mut BTreeMap<String, BTreeSet<String>>,
+    structures: &mut BTreeMap<String, BTreeSet<String>>,
+    cards: &mut BTreeSet<String>,
 ) -> PlainCssOutcome {
     let source = strip_css_comments(source);
     let mut index = 0;
@@ -568,21 +586,35 @@ fn collect_plain_css_semantic_classes(
         let body = &source[open + 1..close];
         let (signals, unresolved_variables) =
             classify_plain_css_declarations(body, custom_properties);
-        outcome.unresolved_variables |= unresolved_variables;
+        let (semantic_structures, card_like, structural_unresolved) =
+            classify_plain_css_structure(body, custom_properties);
+        outcome.unresolved_variables |= unresolved_variables || structural_unresolved;
+        let has_semantics = !signals.is_empty() || !semantic_structures.is_empty() || card_like;
         if header.starts_with('@') {
             let supported_tailwind_block =
                 header.starts_with("@theme") || header.starts_with("@utility");
-            if !supported_tailwind_block && !signals.is_empty() {
+            if !supported_tailwind_block && has_semantics {
                 outcome.unresolved_selectors = true;
             }
-        } else if !signals.is_empty() {
+        } else if has_semantics {
             for selector in header.split(',').map(str::trim) {
                 if let Some((name, pseudo_element)) = simple_css_class_name(selector) {
                     if !pseudo_element || generated_pseudo_element(body) {
-                        classes
-                            .entry(name.to_owned())
-                            .or_default()
-                            .extend(signals.clone());
+                        if !signals.is_empty() {
+                            classes
+                                .entry(name.to_owned())
+                                .or_default()
+                                .extend(signals.clone());
+                        }
+                        if !semantic_structures.is_empty() {
+                            structures
+                                .entry(name.to_owned())
+                                .or_default()
+                                .extend(semantic_structures.clone());
+                        }
+                        if card_like {
+                            cards.insert(name.to_owned());
+                        }
                     }
                 } else if selector.contains('.') {
                     outcome.unresolved_selectors = true;
@@ -592,6 +624,86 @@ fn collect_plain_css_semantic_classes(
         index = close + 1;
     }
     outcome
+}
+
+fn classify_plain_css_structure(
+    body: &str,
+    custom_properties: &BTreeMap<String, BTreeSet<String>>,
+) -> (BTreeSet<String>, bool, bool) {
+    let mut declarations = BTreeMap::new();
+    let mut unresolved = false;
+    for declaration in body.split(';') {
+        let Some((property, raw_value)) = declaration.split_once(':') else {
+            continue;
+        };
+        let property = property.trim().to_ascii_lowercase();
+        let value = if raw_value.contains("var(") {
+            match resolve_plain_css_value(raw_value, custom_properties, &mut BTreeSet::new(), 0) {
+                Some(value) => value,
+                None => {
+                    unresolved = true;
+                    continue;
+                }
+            }
+        } else {
+            raw_value.to_owned()
+        };
+        declarations.insert(property, value.trim().to_ascii_lowercase());
+    }
+
+    let mut structures = BTreeSet::new();
+    let font_size = declarations
+        .get("font-size")
+        .and_then(|value| css_length_px(value));
+    let letter_spacing = declarations
+        .get("letter-spacing")
+        .and_then(|value| css_length_px(value));
+    if font_size.is_some_and(|pixels| pixels <= 13.0)
+        && declarations
+            .get("text-transform")
+            .is_some_and(|value| value == "uppercase")
+        && letter_spacing.is_some_and(|pixels| pixels > 0.0)
+    {
+        structures.insert("eyebrow-label".to_owned());
+    }
+
+    let repeated_grid = declarations
+        .get("display")
+        .is_some_and(|value| value == "grid")
+        && declarations
+            .get("grid-template-columns")
+            .is_some_and(|value| value.contains("repeat("));
+    if repeated_grid {
+        structures.insert("repeated-panel-grid".to_owned());
+    }
+
+    let padding = declarations
+        .get("padding")
+        .is_some_and(|value| css_lengths(value).any(|pixels| pixels >= 12.0));
+    let radius = declarations
+        .get("border-radius")
+        .is_some_and(|value| css_lengths(value).any(|pixels| pixels >= 6.0));
+    let border = declarations.iter().any(|(property, value)| {
+        property.starts_with("border") && !value.contains("none") && value != "0"
+    });
+    let surface = declarations
+        .get("background")
+        .or_else(|| declarations.get("background-color"))
+        .is_some_and(|value| {
+            !matches!(
+                value.as_str(),
+                "none" | "transparent" | "inherit" | "initial" | "unset"
+            )
+        });
+    let card_like = padding && surface && (border || radius);
+
+    (structures, card_like, unresolved)
+}
+
+fn css_lengths(value: &str) -> impl Iterator<Item = f64> + '_ {
+    value
+        .split_ascii_whitespace()
+        .filter_map(|part| css_length_px(part.trim_matches([',', '/'])))
 }
 
 fn classify_plain_css_declarations(
@@ -840,6 +952,8 @@ fn css_length_px(value: &str) -> Option<f64> {
         pixels.trim().parse().ok()
     } else if let Some(rem) = value.strip_suffix("rem") {
         rem.trim().parse::<f64>().ok().map(|value| value * 16.0)
+    } else if let Some(em) = value.strip_suffix("em") {
+        em.trim().parse::<f64>().ok().map(|value| value * 16.0)
     } else {
         None
     }

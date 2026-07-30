@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub const REPORT_SCHEMA_VERSION: &str = "6";
-pub const RULE_PACK_VERSION: &str = "1.0.0-beta.2";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.3";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
@@ -486,6 +486,8 @@ fn analyze_scope(
         max_wall_time_ms,
         max_reachable_states: effective.resources.max_reachable_states,
         semantic_class_signals: style_inspection.semantic_utilities,
+        semantic_class_structures: style_inspection.semantic_structures,
+        semantic_card_classes: style_inspection.semantic_cards,
     };
     request.cancellation = cancellation.clone();
     let scan_report = scan_with_progress(request, progress).map_err(|error| {
@@ -1112,9 +1114,133 @@ fn classify_routes(
             archetypes,
         });
     }
+    if routes.is_empty() {
+        let mut root_mounts = Vec::new();
+        discover_root_spa_mounts(root, root, &ignore_rules, &mut root_mounts)?;
+        if let Some(owner) = root_mounts.into_iter().next() {
+            routes.push(RouteClassification {
+                path: "root-spa:/".to_owned(),
+                owner,
+                source: "root-spa-entrypoint".to_owned(),
+                confidence: "high".to_owned(),
+                archetypes: vec![ArchetypeMatch {
+                    id: "unknown".to_owned(),
+                    source: "inferred".to_owned(),
+                    confidence: "low".to_owned(),
+                    evidence: vec!["react-root-mount".to_owned()],
+                }],
+            });
+        }
+    }
     routes.sort_by(|left, right| left.path.cmp(&right.path));
     routes.dedup_by(|left, right| left.path == right.path && left.owner == right.owner);
     Ok(routes)
+}
+
+fn discover_root_spa_mounts(
+    root: &Path,
+    directory: &Path,
+    ignore_rules: &[crate::IgnoreRule],
+    owners: &mut Vec<String>,
+) -> Result<(), RepositoryError> {
+    for entry in fs::read_dir(directory).map_err(|error| {
+        RepositoryError::new(format!("cannot read {}: {error}", directory.display()))
+    })? {
+        let entry = entry.map_err(|error| RepositoryError::new(error.to_string()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| RepositoryError::new(error.to_string()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if ignored_path(&relative, file_type.is_dir(), ignore_rules) {
+            continue;
+        }
+        if file_type.is_dir() {
+            let ignored = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    matches!(
+                        name,
+                        ".git"
+                            | ".ai-ui-slop"
+                            | "node_modules"
+                            | "target"
+                            | "dist"
+                            | "build"
+                            | "coverage"
+                            | ".next"
+                    )
+                });
+            if !ignored {
+                discover_root_spa_mounts(root, &path, ignore_rules, owners)?;
+            }
+        } else if file_type.is_file()
+            && matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("jsx" | "tsx")
+            )
+        {
+            let source = fs::read_to_string(&path).unwrap_or_default();
+            if let Some(owner) = root_spa_mount_owner(&source) {
+                owners.push(owner);
+            }
+        }
+    }
+    owners.sort();
+    owners.dedup();
+    Ok(())
+}
+
+fn root_spa_mount_owner(source: &str) -> Option<String> {
+    let render = if let Some(create_root) = source.find("createRoot") {
+        let tail = &source[create_root..];
+        tail.find(".render(")
+            .map(|position| create_root + position + ".render(".len())
+    } else {
+        source
+            .find("ReactDOM.render(")
+            .map(|position| position + "ReactDOM.render(".len())
+    }?;
+    let tail = &source[render..source.len().min(render + 2048)];
+    let mut remaining = tail;
+    while let Some(open) = remaining.find('<') {
+        remaining = &remaining[open + 1..];
+        let length = remaining
+            .bytes()
+            .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+            .count();
+        if length == 0 {
+            continue;
+        }
+        let name = &remaining[..length];
+        if name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_uppercase())
+            && !matches!(
+                name,
+                "StrictMode"
+                    | "Fragment"
+                    | "Suspense"
+                    | "Provider"
+                    | "ErrorBoundary"
+                    | "BrowserRouter"
+                    | "HashRouter"
+            )
+        {
+            return Some(name.to_owned());
+        }
+        remaining = &remaining[length..];
+    }
+    None
 }
 
 fn exported_default_function(source: &str) -> Option<String> {

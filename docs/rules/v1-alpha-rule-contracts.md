@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Rule-pack version | `1.0.0-beta.2` |
+| Rule-pack version | `1.0.0-beta.3` |
 | Status | Accepted for Shot 1 breadth implementation |
 | Calibration status | Pending; not release-approved |
 | Last updated | 2026-07-30 |
@@ -61,7 +61,7 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 - Rule ID: `cardification`; contract version: `0.1.0-alpha`.
 - Entity: one component owner.
 - Activation: either at least five card-like decorated display containers, or at least three with a nested card-like depth of two or more.
-- A card-like container has padding plus at least one of outline, shadow, background treatment, or extreme radius.
+- A card-like container has padding plus at least one of outline, shadow, background treatment, or extreme radius. Restrained plain-CSS surfaces require padding and a non-transparent background plus a border or radius; class names are not evidence.
 - Exclusions: a single card, data grids, dialogs, and approved shared card primitives.
 - Score: 42 base + 5 per card beyond three + 12 for nested-card evidence; cap 85.
 - Occurrence key: `owner-card-system`.
@@ -105,14 +105,14 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 ## Template Convergence
 
 - Rule ID: `template-convergence`; contract version: `0.1.0-alpha`.
-- Entity: one detected route/page owner evaluated independently for every applicable Page Archetype.
-- Built-in structural signals: `eyebrow-pill`, `centered-hero`, `gradient-heading`, `paired-cta`, `framed-product-media`, `bento-grid`, and `three-card-features`.
+- Entity: one detected route/page owner evaluated independently for every applicable Page Archetype. `App` is a page owner when used as a conventional root SPA boundary.
+- Versioned route/archetype structural signals remain `eyebrow-pill`, `centered-hero`, `gradient-heading`, `paired-cta`, `framed-product-media`, `bento-grid`, and `three-card-features`. Rule evaluation also accepts the plain-CSS semantic equivalents `eyebrow-label` and `repeated-panel-grid`; these two internal evidence IDs are not configurable custom-archetype signals.
 - Activation: at least three distinct structures participating in one page owner; four signals score high and five or more may score dominant.
-- Exclusions: one or two stock structures, structures split across unrelated owners, `unknown` classification by itself, and explicitly approved distinctive structures.
+- Exclusions: one or two stock structures, structures split across unrelated owners, one grid counted under multiple aliases, `unknown` classification by itself, and explicitly approved distinctive structures.
 - Score: 15 per structure + a 10-point three-structure interaction, 18 points for four, or 25 for five or more; cap 100.
 - Occurrence key: Page Archetype ID plus sorted structural signal IDs.
 - Multiple archetypes: emit one independently explained Finding per matching archetype; component aggregation uses the strongest score plus capped breadth.
-- Coverage: route declarations and archetype evidence are reported separately. Unknown is a valid result, not a coverage failure.
+- Coverage: route declarations and archetype evidence are reported separately. Page evidence may compose only through uniquely resolved local component names, to depth 8, at most 64 owners, and at most 512 facts. Ambiguous names do not compose. Unknown is a valid result, not a coverage failure.
 - Remediation: preserve the page's purpose while replacing interchangeable composition with product-specific hierarchy, interaction, or content shape.
 
 ## Built-in Page Archetypes
