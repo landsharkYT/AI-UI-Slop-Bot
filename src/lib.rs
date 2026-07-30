@@ -9,8 +9,8 @@ pub mod policy;
 pub use app::{
     ArchetypeMatch, CanonicalReport, ComponentProfile, CoverageDimension, CoverageVector,
     ReportSummary, RepositoryError, RepositoryProfile, RepositoryRequest, RouteClassification,
-    ScopeDiagnostic, ScopeReport, analyze_repository, analyze_repository_with_progress,
-    render_refactoring_brief,
+    ScopeDiagnostic, ScopeReport, StyleAdapterReport, analyze_repository,
+    analyze_repository_with_progress, render_refactoring_brief,
 };
 pub use baseline::{
     BASELINE_SCHEMA_VERSION, BaselineArtifact, BaselineChange, BaselineComparison, BaselineFinding,
@@ -258,6 +258,7 @@ struct CandidateVisitor<'a> {
     class_functions: &'a BTreeSet<String>,
     class_bindings: BTreeMap<String, String>,
     inline_style_bindings: BTreeMap<String, BTreeMap<&'static str, u8>>,
+    cva_bindings: BTreeMap<String, Vec<ResolvedClassState>>,
 }
 
 impl<'a> CandidateVisitor<'a> {
@@ -328,6 +329,20 @@ impl<'a> CandidateVisitor<'a> {
                                         classes: classes.clone(),
                                     }]
                                 }),
+                            JSXExpression::CallExpression(call) => {
+                                let factory = match &call.callee {
+                                    Expression::Identifier(callee) => {
+                                        self.cva_bindings.get(callee.name.as_str()).cloned()
+                                    }
+                                    _ => None,
+                                };
+                                factory.or_else(|| {
+                                    resolve_jsx_class_states(
+                                        &container.expression,
+                                        self.class_functions,
+                                    )
+                                })
+                            }
                             expression => {
                                 resolve_jsx_class_states(expression, self.class_functions)
                             }
@@ -603,6 +618,90 @@ fn resolve_static_template(
     }])
 }
 
+fn parse_cva_binding(call: &CallExpression<'_>) -> Option<Vec<ResolvedClassState>> {
+    let Expression::Identifier(callee) = &call.callee else {
+        return None;
+    };
+    if callee.name.as_str() != "cva" {
+        return None;
+    }
+    let base = call
+        .arguments
+        .first()
+        .and_then(|argument| argument.as_expression())
+        .and_then(static_class_text)
+        .unwrap_or_default();
+    let Some(options) = call
+        .arguments
+        .get(1)
+        .and_then(|argument| argument.as_expression())
+        .and_then(as_object_expression)
+    else {
+        return Some(vec![ResolvedClassState {
+            id: "cva:base".to_owned(),
+            classes: base,
+        }]);
+    };
+    let variants =
+        object_expression_property(options, "variants").and_then(as_object_expression)?;
+    let mut states = vec![ResolvedClassState {
+        id: "cva:base".to_owned(),
+        classes: base,
+    }];
+    for axis_property in &variants.properties {
+        let ObjectPropertyKind::ObjectProperty(axis_property) = axis_property else {
+            return None;
+        };
+        let axis = axis_property.key.static_name()?.to_string();
+        let values = as_object_expression(&axis_property.value)?;
+        let mut axis_states = Vec::new();
+        for value_property in &values.properties {
+            let ObjectPropertyKind::ObjectProperty(value_property) = value_property else {
+                return None;
+            };
+            let value = value_property.key.static_name()?.to_string();
+            let classes = static_class_text(&value_property.value)?;
+            axis_states.push(ResolvedClassState {
+                id: format!("{axis}:{value}"),
+                classes,
+            });
+        }
+        states = combine_class_states(states, axis_states)?;
+    }
+    Some(states)
+}
+
+fn as_object_expression<'a>(expression: &'a Expression<'a>) -> Option<&'a ObjectExpression<'a>> {
+    match expression {
+        Expression::ObjectExpression(object) => Some(object),
+        _ => None,
+    }
+}
+
+fn object_expression_property<'a>(
+    object: &'a ObjectExpression<'a>,
+    expected: &str,
+) -> Option<&'a Expression<'a>> {
+    object.properties.iter().find_map(|property| {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return None;
+        };
+        (property.key.static_name().as_deref() == Some(expected)).then_some(&property.value)
+    })
+}
+
+fn static_class_text(expression: &Expression<'_>) -> Option<String> {
+    match expression {
+        Expression::StringLiteral(literal) => Some(literal.value.to_string()),
+        Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
+            resolve_static_template(template, "static")
+                .and_then(|states| states.into_iter().next())
+                .map(|state| state.classes)
+        }
+        _ => None,
+    }
+}
+
 impl<'a> Visit<'a> for CandidateVisitor<'a> {
     fn visit_function(&mut self, function: &Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
         let owner = function
@@ -632,6 +731,11 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
                     let mut signals = BTreeMap::new();
                     if collect_inline_signals(object, &mut signals) == 0 {
                         self.inline_style_bindings.insert(name.to_string(), signals);
+                    }
+                }
+                Expression::CallExpression(call) => {
+                    if let Some(states) = parse_cva_binding(call) {
+                        self.cva_bindings.insert(name.to_string(), states);
                     }
                 }
                 _ => {}
@@ -836,6 +940,7 @@ pub fn scan_with_progress(
                 class_functions: &request.policy.class_functions,
                 class_bindings: BTreeMap::new(),
                 inline_style_bindings: BTreeMap::new(),
+                cva_bindings: BTreeMap::new(),
             };
             visitor.visit_program(&parsed.program);
             (
@@ -948,7 +1053,7 @@ pub fn scan_with_progress(
 
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
-        schema_version: "0.3.0".to_owned(),
+        schema_version: "0.4.0".to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
@@ -1937,18 +2042,41 @@ fn sort_findings(findings: &mut [Finding]) {
 fn collect_class_signals(classes: &str, signals: &mut BTreeMap<&'static str, u8>) {
     let tokens = classes.split_ascii_whitespace().collect::<Vec<_>>();
     let has = |expected: &str| tokens.contains(&expected);
-    if has("rounded-2xl") || has("rounded-3xl") {
+    if has("rounded-2xl")
+        || has("rounded-3xl")
+        || tokens.iter().any(|token| {
+            arbitrary_pixel_value(token, "rounded-").is_some_and(|value| value >= 24.0)
+        })
+    {
         signals.insert("extreme-radius", 12);
     }
-    if tokens
+    if (tokens
         .iter()
         .any(|token| token.starts_with("bg-gradient-") || token.starts_with("bg-linear-"))
         && tokens.iter().any(|token| token.starts_with("from-"))
-        && tokens.iter().any(|token| token.starts_with("to-"))
+        && tokens.iter().any(|token| token.starts_with("to-")))
+        || tokens.iter().any(|token| {
+            token.starts_with("bg-[")
+                && (token.contains("linear-gradient(")
+                    || token.contains("radial-gradient(")
+                    || token.contains("conic-gradient("))
+        })
     {
         signals.insert("gradient-surface", 18);
     }
-    if has("shadow-xl") || has("shadow-2xl") {
+    if has("shadow-xl")
+        || has("shadow-2xl")
+        || tokens.iter().any(|token| {
+            token.starts_with("shadow-[")
+                && (token.contains("16px")
+                    || token.contains("20px")
+                    || token.contains("24px")
+                    || token.contains("32px")
+                    || token.contains("40px")
+                    || token.contains("48px")
+                    || token.contains("60px"))
+        })
+    {
         signals.insert("large-shadow", 16);
     }
     if tokens.iter().any(|token| {
@@ -1963,12 +2091,25 @@ fn collect_class_signals(classes: &str, signals: &mut BTreeMap<&'static str, u8>
     {
         signals.insert("decorative-outline", 10);
     }
-    let uniform_padding = tokens.iter().any(|token| spacing_at_least(token, "p-", 8));
+    let uniform_padding = tokens.iter().any(|token| {
+        spacing_at_least(token, "p-", 8)
+            || arbitrary_pixel_value(token, "p-").is_some_and(|value| value >= 32.0)
+    });
     let horizontal = tokens.iter().any(|token| spacing_at_least(token, "px-", 8));
     let vertical = tokens.iter().any(|token| spacing_at_least(token, "py-", 8));
     if uniform_padding || (horizontal && vertical) {
         signals.insert("generous-padding", 12);
     }
+}
+
+fn arbitrary_pixel_value(token: &str, prefix: &str) -> Option<f64> {
+    token
+        .strip_prefix(prefix)?
+        .strip_prefix('[')?
+        .strip_suffix(']')?
+        .strip_suffix("px")?
+        .parse()
+        .ok()
 }
 
 fn collect_visual_values(tokens: &[String]) -> Vec<(String, String)> {

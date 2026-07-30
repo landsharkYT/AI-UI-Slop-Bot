@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at the **Shot 3 implementation candidate** (`0.3.0`): product breadth, principal hardening seams, and a first set of Full V1 adapter/lifecycle closures are represented end to end, but external calibration, hosted platform qualification, and remaining implementation gates are incomplete. It must not be presented as Validated MVP or Full V1.
+The repository is at the **Shot 4 implementation candidate** (`0.4.0`): product breadth, principal hardening seams, and a bounded static style-adapter slice are represented end to end, but external calibration, hosted platform qualification, and remaining implementation gates are incomplete. It must not be presented as Validated MVP or Full V1.
 
 ## Run it
 
@@ -14,7 +14,8 @@ The scan:
 
 - loads independent monorepository Analysis Scopes from JSONC configuration;
 - analyzes named function and arrow-function components in `.jsx` and `.tsx` with Oxc;
-- resolves literal and repository-local constant Tailwind `className` strings plus literal and shared static inline-style objects;
+- resolves literal and repository-local constant Tailwind `className` strings, bounded static CVA variant definitions, safely interpretable arbitrary values, and literal/shared static inline-style objects;
+- discovers Tailwind package/configuration and v4 CSS-first sources without importing or executing target code, reporting unresolved local CSS imports as coverage loss;
 - honors the applicable checkout or Trusted Policy `.gitignore`, deduplicates internal source symlinks, and reports external symlinks as coverage loss;
 - resolves relative imports, `tsconfig` path aliases, barrels, and static lazy imports into the typed graph;
 - identifies Next App Router, Next Pages Router, configured, and static React Router boundaries;
@@ -58,7 +59,7 @@ The public seam tests cover discovery and symlinks, reachable-state class compos
 
 ## Candidate limits
 
-Shot 3 still leaves complete CVA/Tailwind/CSS resolution, deeper export and primitive-impact analysis, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 3](docs/shot-3.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
+Shot 4 still leaves Tailwind theme-value interpretation, static CVA selections/compound variants and complete symbolic constraints, deeper export and primitive-impact analysis, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 4](docs/shot-4.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
 
 ## License
 

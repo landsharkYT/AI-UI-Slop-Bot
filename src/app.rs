@@ -17,7 +17,7 @@ use crate::{
     scan_with_progress,
 };
 
-pub const REPORT_SCHEMA_VERSION: &str = "2";
+pub const REPORT_SCHEMA_VERSION: &str = "3";
 pub const RULE_PACK_VERSION: &str = "1.0.0-beta.1";
 
 #[derive(Debug, Clone)]
@@ -103,10 +103,19 @@ pub struct ScopeReport {
     pub coverage: CoverageVector,
     pub routes: Vec<RouteClassification>,
     pub graph: RepositoryGraph,
+    pub style_adapter: StyleAdapterReport,
     pub component_profiles: Vec<ComponentProfile>,
     pub findings: Vec<Finding>,
     pub repository_profile: RepositoryProfile,
     pub diagnostics: Vec<ScopeDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleAdapterReport {
+    pub tailwind_version: Option<String>,
+    pub sources: Vec<String>,
+    pub unresolved: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -312,6 +321,7 @@ fn analyze_scope(
     policy_changed: bool,
     progress: &mut impl FnMut(ProgressEvent),
 ) -> Result<ScopeReport, RepositoryError> {
+    let style_adapter = inspect_style_adapter(&effective.absolute_root)?;
     let active_suppressions = effective
         .suppressions
         .iter()
@@ -489,6 +499,16 @@ fn analyze_scope(
             detail: issue.detail,
         })
         .collect::<Vec<_>>();
+    diagnostics.extend(
+        style_adapter
+            .unresolved
+            .iter()
+            .map(|detail| ScopeDiagnostic {
+                reason: "style-adapter-unresolved".to_owned(),
+                path: effective.relative_root.clone(),
+                detail: detail.clone(),
+            }),
+    );
     diagnostics.append(&mut policy_diagnostics);
     let coverage = CoverageVector {
         parse: dimension(analyzed, discovered, unresolved),
@@ -522,6 +542,7 @@ fn analyze_scope(
     let style_sufficient = coverage.style_resolution.denominator == 0
         || coverage.style_resolution.numerator.saturating_mul(100)
             >= coverage.style_resolution.denominator.saturating_mul(75);
+    let style_sufficient = style_sufficient && style_adapter.unresolved.is_empty();
     let graph_sufficient = !graph_analysis.graph.truncated
         && (coverage.component_graph.denominator == 0
             || coverage.component_graph.numerator.saturating_mul(100)
@@ -572,11 +593,138 @@ fn analyze_scope(
         coverage,
         routes,
         graph: graph_analysis.graph,
+        style_adapter,
         component_profiles,
         findings: scan_report.findings,
         repository_profile,
         diagnostics,
     })
+}
+
+fn inspect_style_adapter(root: &Path) -> Result<StyleAdapterReport, RepositoryError> {
+    let mut sources = Vec::new();
+    let mut unresolved = Vec::new();
+    let mut tailwind_version = None;
+    let manifest = root.join("package.json");
+    if manifest.is_file() {
+        let value = fs::read_to_string(&manifest)
+            .ok()
+            .and_then(|source| serde_json::from_str::<serde_json::Value>(&source).ok());
+        let declared = value.as_ref().and_then(|value| {
+            ["dependencies", "devDependencies"]
+                .into_iter()
+                .find_map(|field| value.get(field)?.get("tailwindcss")?.as_str())
+        });
+        if declared.is_some() {
+            sources.push("package.json".to_owned());
+        }
+        tailwind_version = declared.and_then(|version| {
+            version
+                .chars()
+                .find(|character| character.is_ascii_digit())
+                .map(|major| major.to_string())
+        });
+    }
+    for name in [
+        "tailwind.config.js",
+        "tailwind.config.cjs",
+        "tailwind.config.mjs",
+        "tailwind.config.ts",
+    ] {
+        if root.join(name).is_file() {
+            sources.push(name.to_owned());
+        }
+    }
+    let mut css_files = Vec::new();
+    discover_css_files(root, &mut css_files)?;
+    for path in css_files {
+        let source = fs::read_to_string(&path).unwrap_or_default();
+        let has_v4_directive = source.contains("@theme")
+            || source.contains("@source")
+            || source.contains("@utility")
+            || source.contains("@custom-variant")
+            || source.contains("@import \"tailwindcss\"")
+            || source.contains("@import 'tailwindcss'");
+        if has_v4_directive {
+            match tailwind_version.as_deref() {
+                None => tailwind_version = Some("4".to_owned()),
+                Some("4") => {}
+                Some(version) => unresolved.push(format!(
+                    "{}: Tailwind v4 CSS directives conflict with detected major version {version}",
+                    path.strip_prefix(root).unwrap_or(&path).display()
+                )),
+            }
+            sources.push(
+                path.strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+            for line in source
+                .lines()
+                .filter(|line| line.trim_start().starts_with("@import"))
+            {
+                if line.contains("tailwindcss") {
+                    continue;
+                }
+                if let Some(specifier) = line
+                    .split(['"', '\''])
+                    .nth(1)
+                    .filter(|specifier| !specifier.is_empty())
+                    && !path.parent().unwrap_or(root).join(specifier).is_file()
+                {
+                    unresolved.push(format!(
+                        "{}: unresolved CSS import `{specifier}`",
+                        path.strip_prefix(root).unwrap_or(&path).display()
+                    ));
+                }
+            }
+        }
+    }
+    sources.sort();
+    sources.dedup();
+    unresolved.sort();
+    Ok(StyleAdapterReport {
+        tailwind_version,
+        sources,
+        unresolved,
+    })
+}
+
+fn discover_css_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), RepositoryError> {
+    for entry in fs::read_dir(directory).map_err(|error| RepositoryError::new(error.to_string()))? {
+        let entry = entry.map_err(|error| RepositoryError::new(error.to_string()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| RepositoryError::new(error.to_string()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            let ignored = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    matches!(
+                        name,
+                        ".git"
+                            | ".ai-ui-slop"
+                            | "node_modules"
+                            | "target"
+                            | "dist"
+                            | "build"
+                            | ".next"
+                    )
+                });
+            if !ignored {
+                discover_css_files(&path, files)?;
+            }
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("css") {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 #[must_use]
