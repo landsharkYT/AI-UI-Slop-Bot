@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at the **Shot 2 technical candidate** (`0.2.0`): product breadth and the principal hardening seams are represented end to end, but external calibration, hosted platform qualification, and remaining release evidence are incomplete. It must not be presented as Validated MVP or Full V1.
+The repository is at the **Shot 3 implementation candidate** (`0.3.0`): product breadth, principal hardening seams, and a first set of Full V1 adapter/lifecycle closures are represented end to end, but external calibration, hosted platform qualification, and remaining implementation gates are incomplete. It must not be presented as Validated MVP or Full V1.
 
 ## Run it
 
@@ -14,7 +14,10 @@ The scan:
 
 - loads independent monorepository Analysis Scopes from JSONC configuration;
 - analyzes named function and arrow-function components in `.jsx` and `.tsx` with Oxc;
-- resolves literal Tailwind `className` strings and static inline style objects;
+- resolves literal and repository-local constant Tailwind `className` strings plus literal and shared static inline-style objects;
+- honors the applicable checkout or Trusted Policy `.gitignore`, deduplicates internal source symlinks, and reports external symlinks as coverage loss;
+- resolves relative imports, `tsconfig` path aliases, barrels, and static lazy imports into the typed graph;
+- identifies Next App Router, Next Pages Router, configured, and static React Router boundaries;
 - evaluates the complete nine-rule alpha pack and all fourteen built-in Page Archetypes;
 - supports explicit House Style values/primitives, narrow Suppressions, dispositions, configured routes, safe `unknown`, and declarative custom archetypes;
 - produces Finding, Component, and Repository AI Slop Scores without blending scopes;
@@ -51,11 +54,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
 ```
 
-The public seam tests cover reachable-state class composition, typed repository graphs, Trusted Policy, resource ceilings, hostile filesystem and Markdown inputs, baseline migration, parallel determinism, the nine rule paths, Page Archetypes, command lifecycles, progress, and report artifacts.
+The public seam tests cover discovery and symlinks, reachable-state class composition, shared static styles, typed repository graphs and aliases, route adapters, Trusted Policy, resource ceilings, hostile filesystem and Markdown inputs, baseline migration and review metadata, parallel determinism, the nine rule paths, Page Archetypes, command lifecycles, progress, and report artifacts.
 
 ## Candidate limits
 
-Shot 2 still leaves complete CVA/Tailwind/CSS and framework-adapter resolution, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 2](docs/shot-2.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
+Shot 3 still leaves complete CVA/Tailwind/CSS resolution, deeper export and primitive-impact analysis, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 3](docs/shot-3.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
 
 ## License
 

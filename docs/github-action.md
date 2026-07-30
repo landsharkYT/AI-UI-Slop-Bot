@@ -1,4 +1,4 @@
-# GitHub Action — Shot 2 Candidate
+# GitHub Action — Shot 3 Candidate
 
 The root `action.yml` is a thin composite adapter over the same native scanner used locally. It does not build or download code and therefore requires an absolute path to a separately installed, integrity-verified binary.
 

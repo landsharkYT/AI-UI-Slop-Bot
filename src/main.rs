@@ -8,9 +8,10 @@ use std::{
 };
 
 use ai_ui_slop::{
-    BaselineArtifact, ProgressEvent, RepositoryRequest, accept_candidate, analyze_repository,
-    analyze_repository_with_progress, compare_baseline, create_candidate, page_archetype_catalog,
-    policy, preview_baseline_migration, render_refactoring_brief, rule_catalog,
+    BaselineArtifact, BaselineMigrationPreview, ProgressEvent, RepositoryRequest, accept_candidate,
+    analyze_repository, analyze_repository_with_progress, compare_baseline, create_candidate,
+    page_archetype_catalog, policy, preview_baseline_migration, render_refactoring_brief,
+    rule_catalog,
 };
 use serde_json::{Value, json};
 
@@ -237,24 +238,25 @@ impl ProgressRenderer {
 fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
     let root = argument_root(arguments.first())?;
     let destination = root.join("ai-ui-slop.config.jsonc");
-    let draft = r#"{
+    let scopes = discover_scope_drafts(&root)?;
+    let scopes_json = serde_json::to_string_pretty(&scopes).map_err(internal_serialization)?;
+    let draft = format!(
+        r#"{{
   // Review every generated assumption before enabling enforcement.
   "schemaVersion": "1",
   "mode": "advisory",
-  "scopes": [
-    { "id": "default", "root": "." }
-  ],
-  "houseStyle": {
+  "scopes": {scopes_json},
+  "houseStyle": {{
     "intent": "",
     "approvedSignals": [],
-    "approvedValues": {},
+    "approvedValues": {{}},
     "approvedPrimitives": []
-  },
+  }},
   "suppressions": [],
-  "rules": {},
+  "rules": {{}},
   "customArchetypes": [],
   "classFunctions": ["clsx", "classnames", "classNames", "cn", "twMerge"],
-  "resources": {
+  "resources": {{
     "maxFiles": 20000,
     "maxSourceBytes": 536870912,
     "maxFileBytes": 2097152,
@@ -263,9 +265,10 @@ fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
     "maxDiagnostics": 10000,
     "maxJsonBytes": 268435456,
     "maxMarkdownBytes": 67108864
-  }
-}
-"#;
+  }}
+}}
+"#
+    );
     let mut file = open_new_private(&destination).map_err(|error| {
         (
             2,
@@ -281,10 +284,111 @@ fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
             )
         })?;
     eprintln!(
-        "created {}; review Analysis Scopes and House Style before enforcement",
-        destination.display()
+        "created {}; review {} discovered Analysis Scope(s), House Style, and unresolved assumptions for routing, Tailwind, wrappers, and page boundaries before enforcement",
+        destination.display(),
+        scopes.len()
     );
     Ok(())
+}
+
+fn discover_scope_drafts(root: &Path) -> Result<Vec<Value>, (u8, String)> {
+    fn visit(root: &Path, directory: &Path, depth: usize, roots: &mut Vec<String>) {
+        if depth > 3 {
+            return;
+        }
+        let package = directory.join("package.json");
+        if package.is_file() && frontend_package(directory, &package) {
+            let relative = directory
+                .strip_prefix(root)
+                .unwrap_or(directory)
+                .to_string_lossy()
+                .replace('\\', "/");
+            roots.push(if relative.is_empty() {
+                ".".to_owned()
+            } else {
+                relative
+            });
+        }
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let ignored = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    matches!(
+                        name,
+                        ".git" | ".ai-ui-slop" | "node_modules" | "target" | "dist" | "build"
+                    )
+                });
+            if !ignored {
+                visit(root, &path, depth + 1, roots);
+            }
+        }
+    }
+
+    let mut roots = Vec::new();
+    visit(root, root, 0, &mut roots);
+    roots.sort();
+    roots.dedup();
+    if roots.len() > 1 {
+        let candidates = roots.clone();
+        roots.retain(|root| {
+            root != "."
+                && !candidates.iter().any(|candidate| {
+                    candidate != root && candidate.starts_with(&format!("{root}/"))
+                })
+        });
+    }
+    if roots.is_empty() {
+        roots.push(".".to_owned());
+    }
+    let mut used_ids = BTreeSet::new();
+    Ok(roots
+        .into_iter()
+        .enumerate()
+        .map(|(index, root)| {
+            let base_id = if root == "." {
+                "default".to_owned()
+            } else {
+                root.replace('/', "-")
+            };
+            let id = if used_ids.insert(base_id.clone()) {
+                base_id
+            } else {
+                format!("{base_id}-{}", index + 1)
+            };
+            json!({"id": id, "root": root})
+        })
+        .collect())
+}
+
+fn frontend_package(directory: &Path, package: &Path) -> bool {
+    let value = fs::read_to_string(package)
+        .ok()
+        .and_then(|source| serde_json::from_str::<Value>(&source).ok());
+    let has_frontend_dependency = value.as_ref().is_some_and(|value| {
+        ["dependencies", "devDependencies"]
+            .into_iter()
+            .filter_map(|field| value.get(field).and_then(Value::as_object))
+            .any(|dependencies| {
+                dependencies.keys().any(|name| {
+                    matches!(
+                        name.as_str(),
+                        "react" | "react-dom" | "next" | "react-router" | "react-router-dom"
+                    )
+                })
+            })
+    });
+    has_frontend_dependency
+        || ["src", "app", "pages"]
+            .into_iter()
+            .any(|name| directory.join(name).is_dir())
 }
 
 fn run_config(arguments: &[String]) -> Result<(), (u8, String)> {
@@ -330,6 +434,17 @@ fn run_config(arguments: &[String]) -> Result<(), (u8, String)> {
                 "houseStyle": scope.house_style,
                 "rules": scope.rules,
                 "customArchetypes": scope.custom_archetypes,
+                "suppressions": scope.suppressions,
+                "classFunctions": scope.class_functions,
+                "resources": scope.resources,
+                "provenance": {
+                    "mode": "repository-root",
+                    "houseStyle": "built-in + repository-root + analysis-scope",
+                    "rules": "built-in + repository-root",
+                    "suppressions": "repository-root",
+                    "classFunctions": "repository-root",
+                    "resources": "repository-root"
+                }
             }))
             .map_err(internal_serialization)?
         );
@@ -354,7 +469,8 @@ fn run_baseline(arguments: &[String]) -> Result<(), (u8, String)> {
             let force = arguments.iter().any(|argument| argument == "--force");
             let report = analyze_repository(RepositoryRequest::new(&root))
                 .map_err(|error| (2, error.to_string()))?;
-            let candidate = create_candidate(&report);
+            let mut candidate = create_candidate(&report);
+            candidate.source_revision = read_source_revision(&root);
             let artifact_directory = create_artifact_directory(&root, Path::new(".ai-ui-slop"))?;
             let destination = artifact_directory.join("baseline-candidate.json");
             let bytes = serialize_pretty(&candidate)?;
@@ -412,6 +528,33 @@ fn run_baseline_accept(arguments: &[String]) -> Result<(), (u8, String)> {
     let accepted =
         accept_candidate(candidate, &approver, &rationale).map_err(|message| (2, message))?;
     let destination = root.join("ai-ui-slop.baseline.json");
+    let replacement_summary =
+        if destination.is_file() {
+            if !force {
+                String::new()
+            } else {
+                let preview_path = root.join(".ai-ui-slop/baseline-preview.json");
+                let preview: BaselineMigrationPreview =
+                serde_json::from_slice(&fs::read(&preview_path).map_err(|error| {
+                    (
+                        2,
+                        format!(
+                            "baseline replacement requires a fresh semantic preview at {}: {error}",
+                            preview_path.display()
+                        ),
+                    )
+                })?)
+                .map_err(|error| {
+                    (
+                        2,
+                        format!("invalid semantic preview {}: {error}", preview_path.display()),
+                    )
+                })?;
+                format!("; {}", baseline_change_summary(&preview))
+            }
+        } else {
+            String::new()
+        };
     let bytes = serialize_pretty(&accepted)?;
     write_generated(
         &destination,
@@ -419,8 +562,31 @@ fn run_baseline_accept(arguments: &[String]) -> Result<(), (u8, String)> {
         GeneratedKind::Json("ai-ui-slop.baseline"),
         force,
     )?;
-    println!("accepted Reviewed Baseline: {}", destination.display());
+    println!(
+        "accepted Reviewed Baseline: {}{}",
+        destination.display(),
+        replacement_summary
+    );
     Ok(())
+}
+
+fn baseline_change_summary(preview: &BaselineMigrationPreview) -> String {
+    let count = |kinds: &[&str]| {
+        preview
+            .changes
+            .iter()
+            .filter(|change| kinds.contains(&change.kind.as_str()))
+            .count()
+    };
+    format!(
+        "semantic replacement summary added={} removed={} worsened={} improved={} changed={} ambiguous={}",
+        count(&["added", "new"]),
+        count(&["removed", "resolved"]),
+        count(&["worsened"]),
+        count(&["improved"]),
+        count(&["changed"]),
+        preview.ambiguous_count
+    )
 }
 
 fn run_baseline_check(arguments: &[String]) -> Result<(), (u8, String)> {
@@ -869,6 +1035,34 @@ fn option_value(arguments: &[String], option: &str) -> Result<String, (u8, Strin
         .get(position + 1)
         .cloned()
         .ok_or_else(|| (2, format!("`{option}` requires a value")))
+}
+
+fn read_source_revision(root: &Path) -> Option<String> {
+    let git = root.join(".git");
+    let head = fs::read_to_string(git.join("HEAD")).ok()?;
+    let head = head.trim();
+    if is_git_object_id(head) {
+        return Some(head.to_owned());
+    }
+    let reference = head.strip_prefix("ref: ")?.trim();
+    let loose = fs::read_to_string(git.join(reference)).ok();
+    if let Some(revision) = loose.as_deref().map(str::trim)
+        && is_git_object_id(revision)
+    {
+        return Some(revision.to_owned());
+    }
+    fs::read_to_string(git.join("packed-refs"))
+        .ok()?
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.starts_with('^'))
+        .filter_map(|line| line.split_once(' '))
+        .find_map(|(revision, candidate)| {
+            (candidate == reference && is_git_object_id(revision)).then(|| revision.to_owned())
+        })
+}
+
+fn is_git_object_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn title_case(rule_id: &str) -> String {

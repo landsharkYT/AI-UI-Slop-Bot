@@ -68,6 +68,7 @@ impl ScanRequest {
 
 #[derive(Debug, Clone)]
 pub struct ScanPolicy {
+    pub ignore_policy_root: Option<PathBuf>,
     pub approved_signals: BTreeSet<String>,
     pub approved_values: BTreeMap<String, BTreeSet<String>>,
     pub approved_primitives: BTreeSet<(String, String)>,
@@ -85,6 +86,7 @@ pub struct ScanPolicy {
 impl Default for ScanPolicy {
     fn default() -> Self {
         Self {
+            ignore_policy_root: None,
             approved_signals: BTreeSet::new(),
             approved_values: BTreeMap::new(),
             approved_primitives: BTreeSet::new(),
@@ -254,6 +256,8 @@ struct CandidateVisitor<'a> {
     generic_depth: usize,
     approved_signals: &'a BTreeSet<String>,
     class_functions: &'a BTreeSet<String>,
+    class_bindings: BTreeMap<String, String>,
+    inline_style_bindings: BTreeMap<String, BTreeMap<&'static str, u8>>,
 }
 
 impl<'a> CandidateVisitor<'a> {
@@ -314,9 +318,21 @@ impl<'a> CandidateVisitor<'a> {
                         }];
                     }
                     Some(JSXAttributeValue::ExpressionContainer(container)) => {
-                        if let Some(states) =
-                            resolve_jsx_class_states(&container.expression, self.class_functions)
-                        {
+                        let states = match &container.expression {
+                            JSXExpression::Identifier(identifier) => self
+                                .class_bindings
+                                .get(identifier.name.as_str())
+                                .map(|classes| {
+                                    vec![ResolvedClassState {
+                                        id: format!("binding:{}", identifier.name),
+                                        classes: classes.clone(),
+                                    }]
+                                }),
+                            expression => {
+                                resolve_jsx_class_states(expression, self.class_functions)
+                            }
+                        };
+                        if let Some(states) = states {
                             self.style_expressions_resolved += 1;
                             class_states = states;
                         } else {
@@ -330,10 +346,22 @@ impl<'a> CandidateVisitor<'a> {
                 self.style_expressions_total += 1;
                 match attribute.value.as_ref() {
                     Some(JSXAttributeValue::ExpressionContainer(container)) => {
-                        if let oxc_ast::ast::JSXExpression::ObjectExpression(object) =
-                            &container.expression
-                        {
-                            let unresolved = collect_inline_signals(object, &mut inline_signals);
+                        let unresolved = match &container.expression {
+                            JSXExpression::ObjectExpression(object) => {
+                                Some(collect_inline_signals(object, &mut inline_signals))
+                            }
+                            JSXExpression::Identifier(identifier) => self
+                                .inline_style_bindings
+                                .get(identifier.name.as_str())
+                                .map(|signals| {
+                                    inline_signals.extend(
+                                        signals.iter().map(|(signal, weight)| (*signal, *weight)),
+                                    );
+                                    0
+                                }),
+                            _ => None,
+                        };
+                        if let Some(unresolved) = unresolved {
                             self.unresolved_dynamic_style += unresolved;
                             if unresolved == 0 {
                                 self.style_expressions_resolved += 1;
@@ -585,6 +613,30 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
     }
 
     fn visit_variable_declarator(&mut self, declarator: &VariableDeclarator<'a>) {
+        if let Some(name) = declarator.id.get_identifier_name()
+            && let Some(initializer) = &declarator.init
+        {
+            match initializer {
+                Expression::StringLiteral(literal) => {
+                    self.class_bindings
+                        .insert(name.to_string(), literal.value.to_string());
+                }
+                Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
+                    if let Some(state) = resolve_static_template(template, "binding")
+                        .and_then(|states| states.into_iter().next())
+                    {
+                        self.class_bindings.insert(name.to_string(), state.classes);
+                    }
+                }
+                Expression::ObjectExpression(object) => {
+                    let mut signals = BTreeMap::new();
+                    if collect_inline_signals(object, &mut signals) == 0 {
+                        self.inline_style_bindings.insert(name.to_string(), signals);
+                    }
+                }
+                _ => {}
+            }
+        }
         let is_arrow = matches!(
             declarator.init.as_ref(),
             Some(Expression::ArrowFunctionExpression(_))
@@ -655,6 +707,11 @@ pub fn scan_with_progress(
 
     let discovery = discover_source_files(
         &root,
+        request
+            .policy
+            .ignore_policy_root
+            .as_deref()
+            .unwrap_or(&root),
         request.policy.max_files,
         request.policy.max_source_bytes,
         request.policy.max_file_bytes,
@@ -777,6 +834,8 @@ pub fn scan_with_progress(
                 generic_depth: 0,
                 approved_signals: &request.policy.approved_signals,
                 class_functions: &request.policy.class_functions,
+                class_bindings: BTreeMap::new(),
+                inline_style_bindings: BTreeMap::new(),
             };
             visitor.visit_program(&parsed.program);
             (
@@ -889,7 +948,7 @@ pub fn scan_with_progress(
 
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
-        schema_version: "0.2.0".to_owned(),
+        schema_version: "0.3.0".to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
@@ -975,11 +1034,27 @@ struct DiscoveredSources {
 
 fn discover_source_files(
     root: &Path,
+    ignore_policy_root: &Path,
     max_files: usize,
     max_source_bytes: u64,
     max_file_bytes: u64,
 ) -> Result<DiscoveredSources, ScanError> {
-    fn visit(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        ignore_rules: &[IgnoreRule],
+        visited_directories: &mut BTreeSet<PathBuf>,
+        files: &mut BTreeMap<PathBuf, PathBuf>,
+        issues: &mut Vec<CoverageIssue>,
+    ) -> Result<(), ScanError> {
+        let resolved_directory = directory.canonicalize().map_err(|error| {
+            ScanError::new(format!("cannot resolve {}: {error}", directory.display()))
+        })?;
+        if !resolved_directory.starts_with(root)
+            || !visited_directories.insert(resolved_directory.clone())
+        {
+            return Ok(());
+        }
         let entries = fs::read_dir(directory).map_err(|error| {
             ScanError::new(format!("cannot read {}: {error}", directory.display()))
         })?;
@@ -989,7 +1064,40 @@ fn discover_source_files(
             let file_type = entry
                 .file_type()
                 .map_err(|error| ScanError::new(error.to_string()))?;
+            let relative = normalize_path(root, &path);
+            if ignored_path(&relative, file_type.is_dir(), ignore_rules) {
+                continue;
+            }
             if file_type.is_symlink() {
+                let resolved = match path.canonicalize() {
+                    Ok(resolved) => resolved,
+                    Err(_) => {
+                        issues.push(CoverageIssue {
+                            path: relative,
+                            reason: "broken-symlink".to_owned(),
+                            detail: "symlink target could not be resolved".to_owned(),
+                        });
+                        continue;
+                    }
+                };
+                if !resolved.starts_with(root) {
+                    issues.push(CoverageIssue {
+                        path: relative,
+                        reason: "external-symlink".to_owned(),
+                        detail: "symlink target resolves outside repository boundary".to_owned(),
+                    });
+                } else if resolved.is_dir() {
+                    visit(
+                        root,
+                        &resolved,
+                        ignore_rules,
+                        visited_directories,
+                        files,
+                        issues,
+                    )?;
+                } else if eligible_source(&resolved) {
+                    files.entry(resolved.clone()).or_insert(resolved);
+                }
                 continue;
             }
             if file_type.is_dir() {
@@ -999,26 +1107,49 @@ fn discover_source_files(
                     .is_some_and(|name| {
                         matches!(
                             name,
-                            ".git" | "node_modules" | "target" | "dist" | "build" | ".next"
+                            ".git"
+                                | ".ai-ui-slop"
+                                | "node_modules"
+                                | "target"
+                                | "dist"
+                                | "build"
+                                | "coverage"
+                                | ".next"
                         )
                     });
                 if !ignored {
-                    visit(&path, files)?;
+                    visit(
+                        root,
+                        &path,
+                        ignore_rules,
+                        visited_directories,
+                        files,
+                        issues,
+                    )?;
                 }
-            } else if file_type.is_file()
-                && matches!(
-                    path.extension().and_then(|extension| extension.to_str()),
-                    Some("jsx" | "tsx")
-                )
-            {
-                files.push(path);
+            } else if file_type.is_file() && eligible_source(&path) {
+                let resolved = path.canonicalize().map_err(|error| {
+                    ScanError::new(format!("cannot resolve {}: {error}", path.display()))
+                })?;
+                files.entry(resolved).or_insert(path);
             }
         }
         Ok(())
     }
 
-    let mut files = Vec::new();
-    visit(root, &mut files)?;
+    let ignore_rules = load_ignore_rules(ignore_policy_root)?;
+    let mut files_by_identity = BTreeMap::new();
+    let mut visited_directories = BTreeSet::new();
+    let mut issues = Vec::new();
+    visit(
+        root,
+        root,
+        &ignore_rules,
+        &mut visited_directories,
+        &mut files_by_identity,
+        &mut issues,
+    )?;
+    let mut files = files_by_identity.into_values().collect::<Vec<_>>();
     files.sort();
     let total_count = files.len();
     let mut case_folded = BTreeMap::<String, PathBuf>::new();
@@ -1043,7 +1174,6 @@ fn discover_source_files(
     let mut scheduled = Vec::new();
     let mut scheduled_bytes = 0_u64;
     let mut observed_bytes = 0_u64;
-    let mut issues = Vec::new();
     for file in files {
         let bytes = fs::metadata(&file)
             .map_err(|error| ScanError::new(format!("cannot inspect {}: {error}", file.display())))?
@@ -1084,6 +1214,109 @@ fn discover_source_files(
         total_count,
         issues,
     })
+}
+
+#[derive(Debug)]
+pub(crate) struct IgnoreRule {
+    pattern: String,
+    negated: bool,
+    directory_only: bool,
+}
+
+pub(crate) fn load_ignore_rules(root: &Path) -> Result<Vec<IgnoreRule>, ScanError> {
+    let path = root.join(".gitignore");
+    let source = match fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(ScanError::new(format!(
+                "cannot read ignore policy {}: {error}",
+                path.display()
+            )));
+        }
+    };
+    Ok(source
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (negated, line) = line
+                .strip_prefix('!')
+                .map_or((false, line), |line| (true, line));
+            let directory_only = line.ends_with('/');
+            let pattern = line
+                .trim_start_matches('/')
+                .trim_end_matches('/')
+                .replace('\\', "/");
+            (!pattern.is_empty()).then_some(IgnoreRule {
+                pattern,
+                negated,
+                directory_only,
+            })
+        })
+        .collect())
+}
+
+pub(crate) fn ignored_path(relative: &str, is_directory: bool, rules: &[IgnoreRule]) -> bool {
+    let mut ignored = false;
+    for rule in rules {
+        if rule.directory_only
+            && !is_directory
+            && !relative.starts_with(&format!("{}/", rule.pattern))
+        {
+            continue;
+        }
+        let matched = if rule.pattern.contains('/') {
+            relative == rule.pattern
+                || (rule.directory_only && relative.starts_with(&format!("{}/", rule.pattern)))
+        } else {
+            relative
+                .split('/')
+                .any(|component| glob_matches(&rule.pattern, component))
+        };
+        if matched {
+            ignored = !rule.negated;
+        }
+    }
+    ignored
+}
+
+fn glob_matches(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let value = value.as_bytes();
+    let (mut pattern_index, mut value_index) = (0, 0);
+    let (mut star, mut checkpoint) = (None, 0);
+    while value_index < value.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == b'?' || pattern[pattern_index] == value[value_index])
+        {
+            pattern_index += 1;
+            value_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+            star = Some(pattern_index);
+            pattern_index += 1;
+            checkpoint = value_index;
+        } else if let Some(star_index) = star {
+            pattern_index = star_index + 1;
+            checkpoint += 1;
+            value_index = checkpoint;
+        } else {
+            return false;
+        }
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
+}
+
+fn eligible_source(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("jsx" | "tsx")
+    )
 }
 
 fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<Finding> {

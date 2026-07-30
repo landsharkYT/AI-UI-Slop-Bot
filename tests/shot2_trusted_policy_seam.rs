@@ -66,3 +66,30 @@ export function Effects() {
             .any(|diagnostic| diagnostic.reason == "policy-change-proposal")
     );
 }
+
+#[test]
+fn contributor_gitignore_cannot_hide_source_from_trusted_policy_analysis() {
+    let source = tempfile::tempdir().expect("source repository");
+    let trusted = tempfile::tempdir().expect("trusted policy repository");
+    fs::write(source.path().join(".gitignore"), "Hidden.tsx\n").expect("untrusted ignore");
+    fs::write(trusted.path().join(".gitignore"), "").expect("trusted ignore");
+    fs::write(
+        source.path().join("Hidden.tsx"),
+        "export function Hidden(){return <main>hidden</main>}",
+    )
+    .expect("source");
+
+    let report = analyze_repository(
+        RepositoryRequest::new(source.path()).with_trusted_policy_root(trusted.path()),
+    )
+    .expect("trusted analysis succeeds");
+
+    assert_eq!(report.scopes[0].coverage.parse.denominator, 1);
+    assert_eq!(report.scopes[0].coverage.parse.numerator, 1);
+    assert!(
+        report.scopes[0]
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.reason == "policy-change-proposal")
+    );
+}

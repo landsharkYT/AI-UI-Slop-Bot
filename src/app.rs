@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AnalyzedOwner, Finding, ProgressEvent, RepositoryGraph, ScanPolicy, ScanRequest,
     graph::{GraphRequest, build_repository_graph},
-    page_archetype_catalog,
+    ignored_path, load_ignore_rules, page_archetype_catalog,
     policy::{
         EffectiveScope, PolicyDisposition, load_config, resolve_scopes, suppression_is_expired,
     },
@@ -198,8 +198,10 @@ pub fn analyze_repository_with_progress(
         "trusted"
     };
     let policy_changed = policy_root != root
-        && fs::read(root.join("ai-ui-slop.config.jsonc")).ok()
-            != fs::read(policy_root.join("ai-ui-slop.config.jsonc")).ok();
+        && (fs::read(root.join("ai-ui-slop.config.jsonc")).ok()
+            != fs::read(policy_root.join("ai-ui-slop.config.jsonc")).ok()
+            || fs::read(root.join(".gitignore")).ok()
+                != fs::read(policy_root.join(".gitignore")).ok());
     let config = load_config(&policy_root).map_err(RepositoryError::new)?;
     let effective_scopes = resolve_scopes(&root, &config).map_err(RepositoryError::new)?;
     let scope_count = effective_scopes.len().max(1);
@@ -216,6 +218,7 @@ pub fn analyze_repository_with_progress(
             };
             scopes.push(analyze_scope(
                 effective,
+                &policy_root.join(&effective.relative_root),
                 policy_source,
                 policy_changed,
                 &mut scoped_progress,
@@ -231,6 +234,7 @@ pub fn analyze_repository_with_progress(
             for _ in 0..worker_count {
                 let next = &next;
                 let effective_scopes = &effective_scopes;
+                let policy_root = &policy_root;
                 handles.push(thread_scope.spawn(move || {
                     let mut results = Vec::new();
                     loop {
@@ -240,7 +244,13 @@ pub fn analyze_repository_with_progress(
                         };
                         results.push((
                             index,
-                            analyze_scope(effective, policy_source, policy_changed, &mut |_| {}),
+                            analyze_scope(
+                                effective,
+                                &policy_root.join(&effective.relative_root),
+                                policy_source,
+                                policy_changed,
+                                &mut |_| {},
+                            ),
                         ));
                     }
                     results
@@ -297,6 +307,7 @@ pub fn analyze_repository_with_progress(
 
 fn analyze_scope(
     effective: &EffectiveScope,
+    ignore_policy_root: &Path,
     policy_source: &str,
     policy_changed: bool,
     progress: &mut impl FnMut(ProgressEvent),
@@ -332,6 +343,7 @@ fn analyze_scope(
     let mut request = ScanRequest::new(&effective.absolute_root);
     request.analysis_scope.clone_from(&effective.id);
     request.policy = ScanPolicy {
+        ignore_policy_root: Some(ignore_policy_root.to_path_buf()),
         approved_signals: effective
             .house_style
             .approved_signals
@@ -428,6 +440,7 @@ fn analyze_scope(
     }
     let routes = classify_routes(
         &effective.absolute_root,
+        ignore_policy_root,
         &effective.custom_archetypes,
         &effective.route_overrides,
     )?;
@@ -453,6 +466,7 @@ fn analyze_scope(
         .collect::<Vec<_>>();
     let graph_analysis = build_repository_graph(GraphRequest {
         root: &effective.absolute_root,
+        ignore_policy_root,
         owners: &scan_report.owners,
         routes: &graph_routes,
         approved_primitives: &approved_primitives,
@@ -746,11 +760,14 @@ fn aggregate_repository(profiles: &[ComponentProfile], findings: &[Finding]) -> 
 
 fn classify_routes(
     root: &Path,
+    ignore_policy_root: &Path,
     custom: &[crate::policy::CustomArchetype],
     configured: &[crate::policy::RouteOverride],
 ) -> Result<Vec<RouteClassification>, RepositoryError> {
+    let ignore_rules = load_ignore_rules(ignore_policy_root)
+        .map_err(|error| RepositoryError::new(error.to_string()))?;
     let mut files = Vec::new();
-    discover_routes(root, root, &mut files)?;
+    discover_routes(root, root, &ignore_rules, &mut files)?;
     let mut routes = Vec::new();
     for path in files {
         let relative = path
@@ -758,11 +775,13 @@ fn classify_routes(
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        let owner = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("UnknownPage")
-            .to_owned();
+        let source = fs::read_to_string(&path).unwrap_or_default();
+        let owner = exported_default_function(&source).unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("UnknownPage")
+                .to_owned()
+        });
         if let Some(route) = configured
             .iter()
             .find(|route| route.path.replace('\\', "/").trim_start_matches("./") == relative)
@@ -786,7 +805,6 @@ fn classify_routes(
             continue;
         }
         let searchable = format!("{relative} {owner}").to_ascii_lowercase();
-        let source = fs::read_to_string(&path).unwrap_or_default();
         let structural_signals = infer_structural_signals(&source);
         let mut archetypes = Vec::new();
         for archetype in page_archetype_catalog() {
@@ -848,16 +866,195 @@ fn classify_routes(
             });
         }
         archetypes.sort_by(|left, right| left.id.cmp(&right.id));
+        let adapter_source = route_adapter_source(&relative.to_ascii_lowercase());
         routes.push(RouteClassification {
             path: relative,
             owner,
-            source: "filesystem-convention".to_owned(),
-            confidence: "medium".to_owned(),
+            source: adapter_source.to_owned(),
+            confidence: if adapter_source == "filesystem-convention" {
+                "medium"
+            } else {
+                "high"
+            }
+            .to_owned(),
+            archetypes,
+        });
+    }
+    let mut react_router_routes = Vec::new();
+    discover_react_router_routes(root, root, &ignore_rules, &mut react_router_routes)?;
+    for (route_path, owner) in react_router_routes {
+        let configured_route = configured
+            .iter()
+            .find(|route| route.path.replace('\\', "/").trim_start_matches("./") == route_path);
+        let archetypes = configured_route.map_or_else(
+            || {
+                let searchable = format!("{route_path} {owner}").to_ascii_lowercase();
+                let mut matches = page_archetype_catalog()
+                    .iter()
+                    .filter_map(|archetype| {
+                        let evidence = archetype
+                            .keywords
+                            .iter()
+                            .filter(|keyword| searchable.contains(**keyword))
+                            .map(|keyword| format!("route-or-owner:{keyword}"))
+                            .collect::<Vec<_>>();
+                        (!evidence.is_empty()).then(|| ArchetypeMatch {
+                            id: archetype.id.to_owned(),
+                            source: "inferred".to_owned(),
+                            confidence: "medium".to_owned(),
+                            evidence,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if matches.is_empty() {
+                    matches.push(ArchetypeMatch {
+                        id: "unknown".to_owned(),
+                        source: "inferred".to_owned(),
+                        confidence: "low".to_owned(),
+                        evidence: Vec::new(),
+                    });
+                }
+                matches
+            },
+            |route| {
+                route
+                    .archetypes
+                    .iter()
+                    .map(|id| ArchetypeMatch {
+                        id: id.clone(),
+                        source: "configured".to_owned(),
+                        confidence: "high".to_owned(),
+                        evidence: vec!["configuration".to_owned()],
+                    })
+                    .collect()
+            },
+        );
+        routes.push(RouteClassification {
+            path: route_path,
+            owner: configured_route
+                .and_then(|route| route.owner.clone())
+                .unwrap_or(owner),
+            source: configured_route
+                .map_or("react-router", |_| "configured")
+                .to_owned(),
+            confidence: "high".to_owned(),
             archetypes,
         });
     }
     routes.sort_by(|left, right| left.path.cmp(&right.path));
+    routes.dedup_by(|left, right| left.path == right.path && left.owner == right.owner);
     Ok(routes)
+}
+
+fn exported_default_function(source: &str) -> Option<String> {
+    let marker = "export default function ";
+    let tail = &source[source.find(marker)? + marker.len()..];
+    let length = tail
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+        .count();
+    (length > 0).then(|| tail[..length].to_owned())
+}
+
+fn route_adapter_source(relative_lowercase: &str) -> &'static str {
+    if relative_lowercase.starts_with("app/")
+        && (relative_lowercase.ends_with("/page.tsx") || relative_lowercase.ends_with("/page.jsx"))
+    {
+        "next-app-router"
+    } else if relative_lowercase.starts_with("pages/") {
+        "next-pages-router"
+    } else {
+        "filesystem-convention"
+    }
+}
+
+fn discover_react_router_routes(
+    root: &Path,
+    directory: &Path,
+    ignore_rules: &[crate::IgnoreRule],
+    routes: &mut Vec<(String, String)>,
+) -> Result<(), RepositoryError> {
+    for entry in fs::read_dir(directory).map_err(|error| {
+        RepositoryError::new(format!("cannot read {}: {error}", directory.display()))
+    })? {
+        let entry = entry.map_err(|error| RepositoryError::new(error.to_string()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| RepositoryError::new(error.to_string()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if ignored_path(&relative, file_type.is_dir(), ignore_rules) {
+            continue;
+        }
+        if file_type.is_dir() {
+            let ignored = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    matches!(
+                        name,
+                        ".git"
+                            | ".ai-ui-slop"
+                            | "node_modules"
+                            | "target"
+                            | "dist"
+                            | "build"
+                            | "coverage"
+                            | ".next"
+                    )
+                });
+            if !ignored {
+                discover_react_router_routes(root, &path, ignore_rules, routes)?;
+            }
+        } else if file_type.is_file()
+            && matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("jsx" | "tsx")
+            )
+        {
+            let source = fs::read_to_string(&path).unwrap_or_default();
+            let mut remaining = source.as_str();
+            while let Some(position) = remaining.find("<Route") {
+                remaining = &remaining[position + 6..];
+                let fragment = &remaining[..remaining.len().min(512)];
+                if let (Some(route_path), Some(owner)) = (
+                    quoted_jsx_attribute(fragment, "path"),
+                    jsx_element_attribute_owner(fragment, "element"),
+                ) {
+                    routes.push((format!("react-router:{route_path}"), owner));
+                }
+            }
+        }
+    }
+    routes.sort();
+    routes.dedup();
+    Ok(())
+}
+
+fn quoted_jsx_attribute(source: &str, attribute: &str) -> Option<String> {
+    let tail = &source[source.find(&format!("{attribute}="))? + attribute.len() + 1..];
+    let quote = tail.chars().next()?;
+    if !matches!(quote, '\'' | '"') {
+        return None;
+    }
+    let tail = &tail[quote.len_utf8()..];
+    Some(tail[..tail.find(quote)?].to_owned())
+}
+
+fn jsx_element_attribute_owner(source: &str, attribute: &str) -> Option<String> {
+    let tail = &source[source.find(&format!("{attribute}={{<"))? + attribute.len() + 3..];
+    let length = tail
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
+        .count();
+    (length > 0).then(|| tail[..length].to_owned())
 }
 
 fn infer_structural_signals(source: &str) -> std::collections::BTreeSet<String> {
@@ -896,6 +1093,7 @@ fn infer_structural_signals(source: &str) -> std::collections::BTreeSet<String> 
 fn discover_routes(
     root: &Path,
     directory: &Path,
+    ignore_rules: &[crate::IgnoreRule],
     files: &mut Vec<PathBuf>,
 ) -> Result<(), RepositoryError> {
     for entry in fs::read_dir(directory).map_err(|error| {
@@ -909,6 +1107,14 @@ fn discover_routes(
             continue;
         }
         let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if ignored_path(&relative, file_type.is_dir(), ignore_rules) {
+            continue;
+        }
         if file_type.is_dir() {
             let ignored = path
                 .file_name()
@@ -920,7 +1126,7 @@ fn discover_routes(
                     )
                 });
             if !ignored {
-                discover_routes(root, &path, files)?;
+                discover_routes(root, &path, ignore_rules, files)?;
             }
         } else if file_type.is_file()
             && matches!(
@@ -938,6 +1144,8 @@ fn discover_routes(
             if stem.contains("page")
                 || stem.contains("screen")
                 || stem.contains("view")
+                || searchable.starts_with("pages/")
+                || searchable.starts_with("routes/")
                 || searchable.contains("/pages/")
                 || searchable.contains("/routes/")
                 || stem == "route"

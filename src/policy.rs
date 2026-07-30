@@ -512,7 +512,7 @@ fn normalize_relative_root(root: &str) -> String {
     }
 }
 
-fn strip_jsonc(source: &str) -> Result<String, String> {
+pub(crate) fn strip_jsonc(source: &str) -> Result<String, String> {
     let mut output = String::with_capacity(source.len());
     let mut characters = source.chars().peekable();
     let mut in_string = false;

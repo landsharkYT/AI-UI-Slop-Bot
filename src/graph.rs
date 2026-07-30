@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::AnalyzedOwner;
+use crate::{AnalyzedOwner, IgnoreRule, ignored_path, load_ignore_rules};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +49,7 @@ pub struct GraphAnalysis {
 
 pub struct GraphRequest<'a> {
     pub root: &'a Path,
+    pub ignore_policy_root: &'a Path,
     pub owners: &'a [AnalyzedOwner],
     pub routes: &'a [(String, String, Vec<String>)],
     pub approved_primitives: &'a [(String, String)],
@@ -56,7 +57,8 @@ pub struct GraphRequest<'a> {
 }
 
 pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis, String> {
-    let files = discover_sources(request.root)?;
+    let files = discover_sources(request.root, request.ignore_policy_root)?;
+    let module_resolution = ModuleResolution::load(request.root)?;
     let mut nodes = BTreeMap::<String, GraphNode>::new();
     let mut edges = BTreeSet::<GraphEdge>::new();
     let mut diagnostics = Vec::new();
@@ -109,7 +111,10 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
             let (target_id, resolved) = if module.dynamic {
                 (format!("unresolved:{}:dynamic-import", relative), false)
             } else if module.specifier.starts_with('.') {
-                match resolve_local_module(file, &module.specifier) {
+                match resolve_module_candidate(
+                    file.parent().unwrap_or(request.root),
+                    &module.specifier,
+                ) {
                     Some(target) if target.starts_with(request.root) => {
                         let target_relative = normalize_path(request.root, &target);
                         (format!("file:{target_relative}"), true)
@@ -119,6 +124,10 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
                         false,
                     ),
                 }
+            } else if let Some(target) = module_resolution.resolve(request.root, &module.specifier)
+            {
+                let target_relative = normalize_path(request.root, &target);
+                (format!("file:{target_relative}"), true)
             } else {
                 (format!("package:{}", module.specifier), true)
             };
@@ -371,8 +380,8 @@ fn extract_rendered_components(source: &str) -> Vec<String> {
     names.into_iter().collect()
 }
 
-fn resolve_local_module(source_file: &Path, specifier: &str) -> Option<PathBuf> {
-    let base = source_file.parent()?.join(specifier);
+fn resolve_module_candidate(base_directory: &Path, specifier: &str) -> Option<PathBuf> {
+    let base = base_directory.join(specifier);
     let mut candidates = vec![base.clone()];
     for extension in ["tsx", "jsx", "ts", "js", "mts", "cts", "mjs", "cjs"] {
         candidates.push(base.with_extension(extension));
@@ -384,8 +393,90 @@ fn resolve_local_module(source_file: &Path, specifier: &str) -> Option<PathBuf> 
         .and_then(|candidate| candidate.canonicalize().ok())
 }
 
-fn discover_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
-    fn visit(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+#[derive(Default)]
+struct ModuleResolution {
+    base_url: PathBuf,
+    paths: Vec<(String, Vec<String>)>,
+}
+
+impl ModuleResolution {
+    fn load(root: &Path) -> Result<Self, String> {
+        let Some(path) = ["tsconfig.json", "jsconfig.json"]
+            .into_iter()
+            .map(|name| root.join(name))
+            .find(|path| path.is_file())
+        else {
+            return Ok(Self::default());
+        };
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        let source = crate::policy::strip_jsonc(&source)?;
+        let value: serde_json::Value = serde_json::from_str(&source)
+            .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+        let compiler = value
+            .get("compilerOptions")
+            .and_then(serde_json::Value::as_object);
+        let base_url = compiler
+            .and_then(|compiler| compiler.get("baseUrl"))
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(PathBuf::new, PathBuf::from);
+        let mut paths = compiler
+            .and_then(|compiler| compiler.get("paths"))
+            .and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(pattern, targets)| {
+                (
+                    pattern.clone(),
+                    targets
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        paths.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(Self { base_url, paths })
+    }
+
+    fn resolve(&self, root: &Path, specifier: &str) -> Option<PathBuf> {
+        for (pattern, targets) in &self.paths {
+            let wildcard = match pattern.split_once('*') {
+                Some((prefix, suffix))
+                    if specifier.starts_with(prefix) && specifier.ends_with(suffix) =>
+                {
+                    Some(&specifier[prefix.len()..specifier.len() - suffix.len()])
+                }
+                None if pattern == specifier => Some(""),
+                _ => None,
+            };
+            let Some(wildcard) = wildcard else {
+                continue;
+            };
+            for target in targets {
+                let target = target.replace('*', wildcard);
+                if let Some(resolved) =
+                    resolve_module_candidate(&root.join(&self.base_url), &target)
+                    && resolved.starts_with(root)
+                {
+                    return Some(resolved);
+                }
+            }
+        }
+        None
+    }
+}
+
+fn discover_sources(root: &Path, ignore_policy_root: &Path) -> Result<Vec<PathBuf>, String> {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        ignore_rules: &[IgnoreRule],
+        files: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
         for entry in fs::read_dir(directory)
             .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
         {
@@ -395,6 +486,10 @@ fn discover_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
                 continue;
             }
             let path = entry.path();
+            let relative = normalize_path(root, &path);
+            if ignored_path(&relative, file_type.is_dir(), ignore_rules) {
+                continue;
+            }
             if file_type.is_dir() {
                 let ignored = path
                     .file_name()
@@ -402,11 +497,18 @@ fn discover_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
                     .is_some_and(|name| {
                         matches!(
                             name,
-                            ".git" | "node_modules" | "target" | "dist" | "build" | ".next"
+                            ".git"
+                                | ".ai-ui-slop"
+                                | "node_modules"
+                                | "target"
+                                | "dist"
+                                | "build"
+                                | "coverage"
+                                | ".next"
                         )
                     });
                 if !ignored {
-                    visit(&path, files)?;
+                    visit(root, &path, ignore_rules, files)?;
                 }
             } else if file_type.is_file()
                 && matches!(
@@ -420,7 +522,8 @@ fn discover_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
         Ok(())
     }
     let mut files = Vec::new();
-    visit(root, &mut files)?;
+    let ignore_rules = load_ignore_rules(ignore_policy_root).map_err(|error| error.to_string())?;
+    visit(root, root, &ignore_rules, &mut files)?;
     files.sort();
     Ok(files)
 }

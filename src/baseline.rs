@@ -20,6 +20,8 @@ pub struct BaselineArtifact {
     pub fingerprint_algorithm_version: String,
     pub evidence_digest_algorithm_version: String,
     pub policy_fingerprints: BTreeMap<String, String>,
+    #[serde(default)]
+    pub source_revision: Option<String>,
     pub findings: Vec<BaselineFinding>,
     pub review: Option<BaselineReview>,
 }
@@ -124,6 +126,7 @@ pub fn create_candidate(report: &CanonicalReport) -> BaselineArtifact {
         fingerprint_algorithm_version: report.fingerprint_algorithm_version.clone(),
         evidence_digest_algorithm_version: report.evidence_digest_algorithm_version.clone(),
         policy_fingerprints,
+        source_revision: None,
         findings,
         review: None,
     }

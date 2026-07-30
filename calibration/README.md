@@ -1,6 +1,6 @@
 # Calibration Evidence
 
-This directory is the durable input format for Shot 2 customer calibration. It is intentionally separate from executable scanner policy: reviewer labels may justify later rule-pack changes, but they are never loaded at scan time.
+This directory is the durable input format for customer calibration. It is intentionally separate from executable scanner policy: reviewer labels may justify later rule-pack changes, but they are never loaded at scan time.
 
 Each case directory must contain:
 
@@ -14,4 +14,4 @@ Each case directory must contain:
 
 Holdout assignment must be declared before threshold calibration. A repository or closely related design family cannot appear in both calibration and holdout sets.
 
-No real customer evidence is committed by Shot 2 implementation itself. The Design Authority must recruit reviewers and record the required blind trials before V1 release claims are allowed.
+No real customer evidence is manufactured by implementation work. The Design Authority must recruit reviewers and record the required blind trials before V1 release claims are allowed.
