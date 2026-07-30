@@ -117,8 +117,8 @@ fn v1_alpha_cli_exposes_configuration_baseline_explain_schema_and_feedback_lifec
     let version = run(&["version"]);
     assert!(version.status.success());
     let version_stdout = String::from_utf8(version.stdout).expect("version stdout");
-    assert!(version_stdout.contains("rule-pack 1.0.0-alpha.1"));
-    assert!(version_stdout.contains("report-schema 1"));
+    assert!(version_stdout.contains("rule-pack 1.0.0-beta.1"));
+    assert!(version_stdout.contains("report-schema 2"));
 
     let schema = run(&["schema", "report"]);
     assert!(schema.status.success());

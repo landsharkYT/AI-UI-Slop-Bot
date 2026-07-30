@@ -3,6 +3,7 @@
 mod app;
 mod baseline;
 mod catalog;
+mod graph;
 pub mod policy;
 
 pub use app::{
@@ -13,12 +14,14 @@ pub use app::{
 };
 pub use baseline::{
     BASELINE_SCHEMA_VERSION, BaselineArtifact, BaselineChange, BaselineComparison, BaselineFinding,
-    BaselineReview, BaselineStatus, accept_candidate, compare_baseline, create_candidate,
+    BaselineMigrationPreview, BaselineReview, BaselineStatus, accept_candidate, compare_baseline,
+    create_candidate, preview_baseline_migration,
 };
 pub use catalog::{
     PageArchetypeDefinition, RuleDefinition, page_archetype_catalog, rule_catalog,
     structural_signal_catalog,
 };
+pub use graph::{GraphEdge, GraphNode, RepositoryGraph};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -29,8 +32,9 @@ use std::{
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXChild, JSXElement,
-    ObjectExpression, ObjectPropertyKind, VariableDeclarator,
+    CallExpression, Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXChild,
+    JSXElement, JSXExpression, ObjectExpression, ObjectPropertyKind, TemplateLiteral,
+    VariableDeclarator,
 };
 use oxc_ast_visit::{
     Visit,
@@ -71,8 +75,11 @@ pub struct ScanPolicy {
     pub rule_dispositions: BTreeMap<String, String>,
     pub rule_minimum_scores: BTreeMap<String, u8>,
     pub rule_minimum_confidences: BTreeMap<String, String>,
+    pub class_functions: BTreeSet<String>,
     pub max_files: usize,
     pub max_source_bytes: u64,
+    pub max_file_bytes: u64,
+    pub max_diagnostics: usize,
 }
 
 impl Default for ScanPolicy {
@@ -85,8 +92,14 @@ impl Default for ScanPolicy {
             rule_dispositions: BTreeMap::new(),
             rule_minimum_scores: BTreeMap::new(),
             rule_minimum_confidences: BTreeMap::new(),
+            class_functions: ["clsx", "classnames", "classNames", "cn", "twMerge"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
             max_files: 20_000,
             max_source_bytes: 512 * 1024 * 1024,
+            max_file_bytes: 2 * 1024 * 1024,
+            max_diagnostics: 10_000,
         }
     }
 }
@@ -162,6 +175,7 @@ pub struct Finding {
     pub band: String,
     pub confidence: String,
     pub evidence_digest: String,
+    pub reachable_state: String,
     pub policy_disposition: String,
     pub archetypes: Vec<String>,
     pub explanation: String,
@@ -194,6 +208,7 @@ struct Candidate {
     column: usize,
     signature: Vec<String>,
     evidence: Vec<Evidence>,
+    reachable_state: String,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +226,13 @@ struct ElementFact {
     stock_structures: Vec<String>,
     snippet: String,
     eligible_display: bool,
+    reachable_state: String,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedClassState {
+    id: String,
+    classes: String,
 }
 
 #[derive(Clone, Copy)]
@@ -231,6 +253,7 @@ struct CandidateVisitor<'a> {
     dialog_depth: usize,
     generic_depth: usize,
     approved_signals: &'a BTreeSet<String>,
+    class_functions: &'a BTreeSet<String>,
 }
 
 impl<'a> CandidateVisitor<'a> {
@@ -269,8 +292,11 @@ impl<'a> CandidateVisitor<'a> {
             .map(|name| name.to_string())
             .unwrap_or_default();
 
-        let mut signals = BTreeMap::<&'static str, u8>::new();
-        let mut class_tokens = Vec::<String>::new();
+        let mut inline_signals = BTreeMap::<&'static str, u8>::new();
+        let mut class_states = vec![ResolvedClassState {
+            id: "default".to_owned(),
+            classes: String::new(),
+        }];
         for attribute in &element.opening_element.attributes {
             let JSXAttributeItem::Attribute(attribute) = attribute else {
                 self.unresolved_dynamic_style += 1;
@@ -282,9 +308,20 @@ impl<'a> CandidateVisitor<'a> {
                 match attribute.value.as_ref() {
                     Some(JSXAttributeValue::StringLiteral(value)) => {
                         self.style_expressions_resolved += 1;
-                        collect_class_signals(value.value.as_str(), &mut signals);
-                        class_tokens
-                            .extend(value.value.split_ascii_whitespace().map(str::to_owned));
+                        class_states = vec![ResolvedClassState {
+                            id: "default".to_owned(),
+                            classes: value.value.to_string(),
+                        }];
+                    }
+                    Some(JSXAttributeValue::ExpressionContainer(container)) => {
+                        if let Some(states) =
+                            resolve_jsx_class_states(&container.expression, self.class_functions)
+                        {
+                            self.style_expressions_resolved += 1;
+                            class_states = states;
+                        } else {
+                            self.unresolved_dynamic_style += 1;
+                        }
                     }
                     Some(_) => self.unresolved_dynamic_style += 1,
                     None => {}
@@ -296,7 +333,7 @@ impl<'a> CandidateVisitor<'a> {
                         if let oxc_ast::ast::JSXExpression::ObjectExpression(object) =
                             &container.expression
                         {
-                            let unresolved = collect_inline_signals(object, &mut signals);
+                            let unresolved = collect_inline_signals(object, &mut inline_signals);
                             self.unresolved_dynamic_style += unresolved;
                             if unresolved == 0 {
                                 self.style_expressions_resolved += 1;
@@ -311,25 +348,12 @@ impl<'a> CandidateVisitor<'a> {
             }
         }
 
-        signals.retain(|signal, _| !self.approved_signals.contains(*signal));
         let span = element.opening_element.span;
         let (line, column) = line_column(self.source, span.start as usize);
         let snippet = source_slice(self.source, span.start, span.end)
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        let signature = signals
-            .keys()
-            .map(|signal| (*signal).to_owned())
-            .collect::<Vec<_>>();
-        let evidence = signals
-            .into_iter()
-            .map(|(signal_id, weight)| Evidence {
-                signal_id: signal_id.to_owned(),
-                weight,
-                snippet: snippet.clone(),
-            })
-            .collect::<Vec<_>>();
         let eligible_display = self.dialog_depth == 0
             && !matches!(
                 tag.as_str(),
@@ -337,59 +361,218 @@ impl<'a> CandidateVisitor<'a> {
             )
             && !element.children.is_empty()
             && !has_dialog_role(element);
-        let visual_values = collect_visual_values(&class_tokens);
-        let shape = if class_tokens.iter().any(|token| token == "rounded-full") {
-            Some("pill".to_owned())
-        } else if signature.iter().any(|signal| signal == "extreme-radius") {
-            Some("extreme-rounded".to_owned())
-        } else {
-            None
-        };
-        let card_like = signature.iter().any(|signal| signal == "generous-padding")
-            && signature.iter().any(|signal| {
-                matches!(
-                    signal.as_str(),
-                    "extreme-radius"
-                        | "gradient-surface"
-                        | "large-shadow"
-                        | "decorative-outline"
-                        | "backdrop-treatment"
-                )
-            });
         let child_element_count = element
             .children
             .iter()
             .filter(|child| matches!(child, JSXChild::Element(_)))
             .count();
         let role = structural_role(&tag).to_owned();
-        let stock_structures =
-            collect_stock_structures(&tag, &class_tokens, &signature, child_element_count);
-        self.facts.push(ElementFact {
-            path: self.path.to_owned(),
-            owner: owner.name.to_owned(),
-            line,
-            column,
-            role,
-            generic_depth: self.generic_depth,
-            signals: signature.clone(),
-            visual_values,
-            shape,
-            card_like,
-            stock_structures,
-            snippet,
-            eligible_display,
-        });
-        if eligible_display && signature.len() >= 3 {
-            self.candidates.push(Candidate {
+        for class_state in class_states {
+            let class_tokens = class_state
+                .classes
+                .split_ascii_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let mut signals = inline_signals.clone();
+            collect_class_signals(&class_state.classes, &mut signals);
+            signals.retain(|signal, _| !self.approved_signals.contains(*signal));
+            let signature = signals
+                .keys()
+                .map(|signal| (*signal).to_owned())
+                .collect::<Vec<_>>();
+            let evidence = signals
+                .into_iter()
+                .map(|(signal_id, weight)| Evidence {
+                    signal_id: signal_id.to_owned(),
+                    weight,
+                    snippet: snippet.clone(),
+                })
+                .collect::<Vec<_>>();
+            let visual_values = collect_visual_values(&class_tokens);
+            let shape = if class_tokens.iter().any(|token| token == "rounded-full") {
+                Some("pill".to_owned())
+            } else if signature.iter().any(|signal| signal == "extreme-radius") {
+                Some("extreme-rounded".to_owned())
+            } else {
+                None
+            };
+            let card_like = signature.iter().any(|signal| signal == "generous-padding")
+                && signature.iter().any(|signal| {
+                    matches!(
+                        signal.as_str(),
+                        "extreme-radius"
+                            | "gradient-surface"
+                            | "large-shadow"
+                            | "decorative-outline"
+                            | "backdrop-treatment"
+                    )
+                });
+            let stock_structures =
+                collect_stock_structures(&tag, &class_tokens, &signature, child_element_count);
+            self.facts.push(ElementFact {
                 path: self.path.to_owned(),
                 owner: owner.name.to_owned(),
                 line,
                 column,
-                signature,
-                evidence,
+                role: role.clone(),
+                generic_depth: self.generic_depth,
+                signals: signature.clone(),
+                visual_values,
+                shape,
+                card_like,
+                stock_structures,
+                snippet: snippet.clone(),
+                eligible_display,
+                reachable_state: class_state.id.clone(),
             });
+            if eligible_display && signature.len() >= 3 {
+                self.candidates.push(Candidate {
+                    path: self.path.to_owned(),
+                    owner: owner.name.to_owned(),
+                    line,
+                    column,
+                    signature,
+                    evidence,
+                    reachable_state: class_state.id,
+                });
+            }
         }
     }
+}
+
+fn resolve_jsx_class_states(
+    expression: &JSXExpression<'_>,
+    class_functions: &BTreeSet<String>,
+) -> Option<Vec<ResolvedClassState>> {
+    match expression {
+        JSXExpression::StringLiteral(literal) => Some(vec![ResolvedClassState {
+            id: "default".to_owned(),
+            classes: literal.value.to_string(),
+        }]),
+        JSXExpression::TemplateLiteral(template) => resolve_static_template(template, "default"),
+        JSXExpression::ConditionalExpression(conditional) => {
+            let mut states = resolve_expression_class_states(
+                &conditional.consequent,
+                "conditional:consequent",
+                class_functions,
+            )?;
+            states.extend(resolve_expression_class_states(
+                &conditional.alternate,
+                "conditional:alternate",
+                class_functions,
+            )?);
+            (states.len() <= 16).then_some(states)
+        }
+        JSXExpression::ParenthesizedExpression(parenthesized) => {
+            resolve_expression_class_states(&parenthesized.expression, "default", class_functions)
+        }
+        JSXExpression::CallExpression(call) => {
+            resolve_call_class_states(call, "default", class_functions)
+        }
+        _ => None,
+    }
+}
+
+fn resolve_expression_class_states(
+    expression: &Expression<'_>,
+    state: &str,
+    class_functions: &BTreeSet<String>,
+) -> Option<Vec<ResolvedClassState>> {
+    match expression {
+        Expression::StringLiteral(literal) => Some(vec![ResolvedClassState {
+            id: state.to_owned(),
+            classes: literal.value.to_string(),
+        }]),
+        Expression::TemplateLiteral(template) => resolve_static_template(template, state),
+        Expression::ParenthesizedExpression(parenthesized) => {
+            resolve_expression_class_states(&parenthesized.expression, state, class_functions)
+        }
+        Expression::ConditionalExpression(conditional) => {
+            let consequent_state = format!("{state}/consequent");
+            let alternate_state = format!("{state}/alternate");
+            let mut states = resolve_expression_class_states(
+                &conditional.consequent,
+                &consequent_state,
+                class_functions,
+            )?;
+            states.extend(resolve_expression_class_states(
+                &conditional.alternate,
+                &alternate_state,
+                class_functions,
+            )?);
+            (states.len() <= 16).then_some(states)
+        }
+        Expression::CallExpression(call) => resolve_call_class_states(call, state, class_functions),
+        _ => None,
+    }
+}
+
+fn resolve_call_class_states(
+    call: &CallExpression<'_>,
+    state: &str,
+    class_functions: &BTreeSet<String>,
+) -> Option<Vec<ResolvedClassState>> {
+    let Expression::Identifier(callee) = &call.callee else {
+        return None;
+    };
+    if !class_functions.contains(callee.name.as_str()) {
+        return None;
+    }
+    let mut combined = vec![ResolvedClassState {
+        id: state.to_owned(),
+        classes: String::new(),
+    }];
+    for (index, argument) in call.arguments.iter().enumerate() {
+        let argument = argument.as_expression()?;
+        let argument_states =
+            resolve_expression_class_states(argument, &format!("arg:{index}"), class_functions)?;
+        combined = combine_class_states(combined, argument_states)?;
+    }
+    Some(combined)
+}
+
+fn combine_class_states(
+    left: Vec<ResolvedClassState>,
+    right: Vec<ResolvedClassState>,
+) -> Option<Vec<ResolvedClassState>> {
+    if left.len().saturating_mul(right.len()) > 16 {
+        return None;
+    }
+    let mut combined = Vec::with_capacity(left.len() * right.len());
+    for left_state in left {
+        for right_state in &right {
+            let id = if right_state.id == "default" {
+                left_state.id.clone()
+            } else if left_state.id == "default" {
+                right_state.id.clone()
+            } else {
+                format!("{}+{}", left_state.id, right_state.id)
+            };
+            let classes = format!("{} {}", left_state.classes, right_state.classes)
+                .trim()
+                .to_owned();
+            combined.push(ResolvedClassState { id, classes });
+        }
+    }
+    Some(combined)
+}
+
+fn resolve_static_template(
+    template: &TemplateLiteral<'_>,
+    state: &str,
+) -> Option<Vec<ResolvedClassState>> {
+    if !template.expressions.is_empty() || template.quasis.len() != 1 {
+        return None;
+    }
+    let value = template.quasis[0]
+        .value
+        .cooked
+        .as_ref()
+        .unwrap_or(&template.quasis[0].value.raw);
+    Some(vec![ResolvedClassState {
+        id: state.to_owned(),
+        classes: value.to_string(),
+    }])
 }
 
 impl<'a> Visit<'a> for CandidateVisitor<'a> {
@@ -474,6 +657,7 @@ pub fn scan_with_progress(
         &root,
         request.policy.max_files,
         request.policy.max_source_bytes,
+        request.policy.max_file_bytes,
     )?;
     emit_progress(
         &mut progress,
@@ -481,16 +665,14 @@ pub fn scan_with_progress(
         discovery.files.len(),
         Some(discovery.total_count),
         10,
-        usize::from(discovery.issue.is_some()),
+        discovery.issues.len(),
         "source inventory complete",
     );
     let mut coverage = Coverage {
         files_discovered: discovery.total_count,
         ..Coverage::default()
     };
-    if let Some(issue) = discovery.issue {
-        coverage.unresolved.push(issue);
-    }
+    coverage.unresolved.extend(discovery.issues);
     let mut candidates = Vec::new();
     let mut facts = Vec::new();
 
@@ -594,6 +776,7 @@ pub fn scan_with_progress(
                 dialog_depth: 0,
                 generic_depth: 0,
                 approved_signals: &request.policy.approved_signals,
+                class_functions: &request.policy.class_functions,
             };
             visitor.visit_program(&parsed.program);
             (
@@ -688,9 +871,25 @@ pub fn scan_with_progress(
         .map(|(path, owner)| AnalyzedOwner { path, owner })
         .collect();
 
+    if coverage.unresolved.len() > request.policy.max_diagnostics {
+        let omitted = coverage
+            .unresolved
+            .len()
+            .saturating_sub(request.policy.max_diagnostics);
+        coverage.unresolved.truncate(request.policy.max_diagnostics);
+        coverage.unresolved.push(CoverageIssue {
+            path: ".".to_owned(),
+            reason: "diagnostic-budget".to_owned(),
+            detail: format!(
+                "omitted {omitted} diagnostic(s) under maxDiagnostics={}",
+                request.policy.max_diagnostics
+            ),
+        });
+    }
+
     Ok(ScanReport {
         artifact_type: "ai-ui-slop.scan-report".to_owned(),
-        schema_version: "0.1.0".to_owned(),
+        schema_version: "0.2.0".to_owned(),
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
@@ -771,13 +970,14 @@ pub fn render_markdown(report: &ScanReport) -> String {
 struct DiscoveredSources {
     files: Vec<PathBuf>,
     total_count: usize,
-    issue: Option<CoverageIssue>,
+    issues: Vec<CoverageIssue>,
 }
 
 fn discover_source_files(
     root: &Path,
     max_files: usize,
     max_source_bytes: u64,
+    max_file_bytes: u64,
 ) -> Result<DiscoveredSources, ScanError> {
     fn visit(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), ScanError> {
         let entries = fs::read_dir(directory).map_err(|error| {
@@ -828,7 +1028,7 @@ fn discover_source_files(
             return Ok(DiscoveredSources {
                 files: Vec::new(),
                 total_count,
-                issue: Some(CoverageIssue {
+                issues: vec![CoverageIssue {
                     path: ".".to_owned(),
                     reason: "path-case-collision".to_owned(),
                     detail: format!(
@@ -836,51 +1036,64 @@ fn discover_source_files(
                         normalize_path(root, &previous),
                         normalize_path(root, file)
                     ),
-                }),
+                }],
             });
         }
     }
     let mut scheduled = Vec::new();
     let mut scheduled_bytes = 0_u64;
     let mut observed_bytes = 0_u64;
+    let mut issues = Vec::new();
     for file in files {
         let bytes = fs::metadata(&file)
             .map_err(|error| ScanError::new(format!("cannot inspect {}: {error}", file.display())))?
             .len();
         observed_bytes = observed_bytes.saturating_add(bytes);
-        if scheduled.len() < max_files && scheduled_bytes.saturating_add(bytes) <= max_source_bytes
+        if bytes > max_file_bytes {
+            issues.push(CoverageIssue {
+                path: normalize_path(root, &file),
+                reason: "file-size-budget".to_owned(),
+                detail: format!(
+                    "eligible source has {bytes} bytes under maxFileBytes={max_file_bytes}"
+                ),
+            });
+        } else if scheduled.len() < max_files
+            && scheduled_bytes.saturating_add(bytes) <= max_source_bytes
         {
             scheduled_bytes = scheduled_bytes.saturating_add(bytes);
             scheduled.push(file);
         }
     }
-    let issue = (scheduled.len() < total_count).then(|| CoverageIssue {
-        path: ".".to_owned(),
-        reason: "resource-budget".to_owned(),
-        detail: format!(
-            "scheduled {}/{} eligible files and {}/{} observed source bytes under limits maxFiles={} maxSourceBytes={}",
-            scheduled.len(),
-            total_count,
-            scheduled_bytes,
-            observed_bytes,
-            max_files,
-            max_source_bytes
-        ),
-    });
+    if scheduled.len().saturating_add(issues.len()) < total_count {
+        issues.push(CoverageIssue {
+            path: ".".to_owned(),
+            reason: "resource-budget".to_owned(),
+            detail: format!(
+                "scheduled {}/{} eligible files and {}/{} observed source bytes under limits maxFiles={} maxSourceBytes={}",
+                scheduled.len(),
+                total_count,
+                scheduled_bytes,
+                observed_bytes,
+                max_files,
+                max_source_bytes
+            ),
+        });
+    }
     Ok(DiscoveredSources {
         files: scheduled,
         total_count,
-        issue,
+        issues,
     })
 }
 
 fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<Finding> {
-    let mut representatives = BTreeMap::<(Vec<String>, String, String), Candidate>::new();
+    let mut representatives = BTreeMap::<(Vec<String>, String, String, String), Candidate>::new();
     for candidate in candidates {
         let key = (
             candidate.signature.clone(),
             candidate.path.clone(),
             candidate.owner.clone(),
+            candidate.reachable_state.clone(),
         );
         representatives.entry(key).or_insert(candidate);
     }
@@ -904,8 +1117,8 @@ fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<
         let signature_key = candidate.signature.join(",");
         let cluster_id = digest(&format!("{RULE_ID}|{signature_key}"));
         let fingerprint = digest(&format!(
-            "{analysis_scope}|{RULE_ID}|{}|{}|{signature_key}|default",
-            candidate.path, candidate.owner
+            "{analysis_scope}|{RULE_ID}|{}|{}|{signature_key}|{}",
+            candidate.path, candidate.owner, candidate.reachable_state
         ));
         let interaction_bonus = match candidate.signature.len() {
             3 => 10,
@@ -937,6 +1150,7 @@ fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<
             band: score_band(score).to_owned(),
             confidence: "high".to_owned(),
             evidence_digest: candidate_evidence_digest,
+            reachable_state: candidate.reachable_state,
             policy_disposition: "report".to_owned(),
             archetypes: Vec::new(),
             explanation:
@@ -958,12 +1172,16 @@ fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<
 }
 
 fn activate_effect_stacking(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<Finding> {
-    let mut strongest = BTreeMap::<(String, String), Candidate>::new();
+    let mut strongest = BTreeMap::<(String, String, String), Candidate>::new();
     for candidate in candidates
         .into_iter()
         .filter(|candidate| candidate.signature.len() >= 4)
     {
-        let key = (candidate.path.clone(), candidate.owner.clone());
+        let key = (
+            candidate.path.clone(),
+            candidate.owner.clone(),
+            candidate.reachable_state.clone(),
+        );
         match strongest.entry(key) {
             std::collections::btree_map::Entry::Vacant(entry) => {
                 entry.insert(candidate);
@@ -997,8 +1215,8 @@ fn activate_effect_stacking(candidates: Vec<Candidate>, analysis_scope: &str) ->
                 rule_id: "effect-stacking".to_owned(),
                 contract_version: "0.1.0-alpha".to_owned(),
                 fingerprint: digest(&format!(
-                    "{analysis_scope}|effect-stacking|{}|{}|{signature_key}|default",
-                    candidate.path, candidate.owner
+                    "{analysis_scope}|effect-stacking|{}|{}|{signature_key}|{}",
+                    candidate.path, candidate.owner, candidate.reachable_state
                 )),
                 cluster_id: digest(&format!(
                     "effect-stacking|{}|{}|{signature_key}",
@@ -1016,6 +1234,7 @@ fn activate_effect_stacking(candidates: Vec<Candidate>, analysis_scope: &str) ->
                 band: score_band(score).to_owned(),
                 confidence: "high".to_owned(),
                 evidence_digest: candidate_evidence_digest,
+                reachable_state: candidate.reachable_state,
                 policy_disposition: "report".to_owned(),
                 archetypes: Vec::new(),
                 explanation:
@@ -1034,10 +1253,14 @@ fn evaluate_v1_alpha_rules(
     analysis_scope: &str,
     policy: &ScanPolicy,
 ) -> Vec<Finding> {
-    let mut grouped = BTreeMap::<(String, String), Vec<&ElementFact>>::new();
+    let mut grouped = BTreeMap::<(String, String, String), Vec<&ElementFact>>::new();
     for fact in facts {
         grouped
-            .entry((fact.path.clone(), fact.owner.clone()))
+            .entry((
+                fact.path.clone(),
+                fact.owner.clone(),
+                fact.reachable_state.clone(),
+            ))
             .or_default()
             .push(fact);
     }
@@ -1294,7 +1517,7 @@ fn evaluate_token_drift(
     policy: &ScanPolicy,
     findings: &mut Vec<Finding>,
 ) {
-    let mut values = BTreeMap::<(String, String), Vec<&ElementFact>>::new();
+    let mut values = BTreeMap::<(String, String, String), Vec<&ElementFact>>::new();
     for fact in facts {
         for (category, value) in &fact.visual_values {
             let Some(approved) = policy.approved_values.get(category) else {
@@ -1302,13 +1525,17 @@ fn evaluate_token_drift(
             };
             if !approved.contains(value) {
                 values
-                    .entry((category.clone(), value.clone()))
+                    .entry((
+                        category.clone(),
+                        value.clone(),
+                        fact.reachable_state.clone(),
+                    ))
                     .or_default()
                     .push(fact);
             }
         }
     }
-    for ((category, value), matching) in values {
+    for ((category, value, _reachable_state), matching) in values {
         let owners = matching
             .iter()
             .map(|fact| (&fact.path, &fact.owner))
@@ -1376,8 +1603,8 @@ fn make_finding(
         rule_id: rule_id.to_owned(),
         contract_version: definition.contract_version.to_owned(),
         fingerprint: digest(&format!(
-            "{analysis_scope}|{rule_id}|{}|{}|{occurrence_key}|default",
-            first.path, first.owner
+            "{analysis_scope}|{rule_id}|{}|{}|{occurrence_key}|{}",
+            first.path, first.owner, first.reachable_state
         )),
         cluster_id: digest(&format!("{rule_id}|{occurrence_key}")),
         recurrence_owner_count,
@@ -1392,6 +1619,7 @@ fn make_finding(
         score,
         band: score_band(score).to_owned(),
         confidence: "high".to_owned(),
+        reachable_state: first.reachable_state.clone(),
         policy_disposition: "report".to_owned(),
         archetypes,
         explanation: definition.summary.to_owned(),
@@ -1767,10 +1995,19 @@ fn escape_markdown(value: &str) -> String {
         .flat_map(|character| {
             if matches!(
                 character,
-                '\\' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#'
+                '\\' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#' | '`'
             ) {
                 ['\\', character].into_iter().collect::<Vec<_>>()
-            } else if character.is_control() {
+            } else if character.is_control()
+                || matches!(
+                    character,
+                    '\u{061c}'
+                        | '\u{200e}'
+                        | '\u{200f}'
+                        | '\u{202a}'..='\u{202e}'
+                        | '\u{2066}'..='\u{2069}'
+                )
+            {
                 format!("\\u{{{:x}}}", character as u32)
                     .chars()
                     .collect::<Vec<_>>()
@@ -1782,7 +2019,7 @@ fn escape_markdown(value: &str) -> String {
 }
 
 fn escape_inline_code(value: &str) -> String {
-    escape_markdown(value).replace('`', "\\`")
+    escape_markdown(value)
 }
 
 fn digest(value: &str) -> String {

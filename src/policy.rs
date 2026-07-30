@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ pub struct ProjectConfig {
     pub suppressions: Vec<Suppression>,
     pub rules: BTreeMap<String, RulePolicy>,
     pub custom_archetypes: Vec<CustomArchetype>,
+    pub class_functions: Vec<String>,
     pub resources: ResourcePolicy,
 }
 
@@ -32,6 +34,13 @@ impl Default for ProjectConfig {
             suppressions: Vec::new(),
             rules: BTreeMap::new(),
             custom_archetypes: Vec::new(),
+            class_functions: vec![
+                "clsx".to_owned(),
+                "classnames".to_owned(),
+                "classNames".to_owned(),
+                "cn".to_owned(),
+                "twMerge".to_owned(),
+            ],
             resources: ResourcePolicy::default(),
         }
     }
@@ -42,6 +51,12 @@ impl Default for ProjectConfig {
 pub struct ResourcePolicy {
     pub max_files: usize,
     pub max_source_bytes: u64,
+    pub max_file_bytes: u64,
+    pub max_graph_edges: usize,
+    pub max_scopes: usize,
+    pub max_diagnostics: usize,
+    pub max_json_bytes: u64,
+    pub max_markdown_bytes: u64,
 }
 
 impl Default for ResourcePolicy {
@@ -49,6 +64,12 @@ impl Default for ResourcePolicy {
         Self {
             max_files: 20_000,
             max_source_bytes: 512 * 1024 * 1024,
+            max_file_bytes: 2 * 1024 * 1024,
+            max_graph_edges: 2_000_000,
+            max_scopes: 64,
+            max_diagnostics: 10_000,
+            max_json_bytes: 256 * 1024 * 1024,
+            max_markdown_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -195,6 +216,7 @@ pub struct EffectiveScope {
     pub suppressions: Vec<Suppression>,
     pub rules: BTreeMap<String, RulePolicy>,
     pub custom_archetypes: Vec<CustomArchetype>,
+    pub class_functions: Vec<String>,
     pub route_overrides: Vec<RouteOverride>,
     pub resources: ResourcePolicy,
     pub mode: AnalysisMode,
@@ -225,13 +247,38 @@ pub fn load_config(repository_root: &Path) -> Result<ProjectConfig, String> {
 }
 
 fn validate_config(config: &ProjectConfig) -> Result<(), String> {
-    if config.resources.max_files == 0 || config.resources.max_source_bytes == 0 {
+    if config.resources.max_files == 0
+        || config.resources.max_source_bytes == 0
+        || config.resources.max_file_bytes == 0
+        || config.resources.max_graph_edges == 0
+        || config.resources.max_scopes == 0
+        || config.resources.max_diagnostics == 0
+        || config.resources.max_json_bytes == 0
+        || config.resources.max_markdown_bytes == 0
+    {
         return Err("resource ceilings must be greater than zero".to_owned());
+    }
+    if config.scopes.len() > config.resources.max_scopes {
+        return Err(format!(
+            "configuration defines {} Analysis Scopes under maxScopes={}",
+            config.scopes.len(),
+            config.resources.max_scopes
+        ));
     }
     let known_rules = rule_catalog()
         .iter()
         .map(|rule| rule.id)
         .collect::<std::collections::BTreeSet<_>>();
+    if config.class_functions.is_empty()
+        || config.class_functions.iter().any(|function| {
+            function.is_empty()
+                || !function.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+                })
+        })
+    {
+        return Err("classFunctions must contain valid JavaScript identifiers".to_owned());
+    }
     for (rule_id, policy) in &config.rules {
         if !known_rules.contains(rule_id.as_str()) {
             return Err(format!("unknown rule policy `{rule_id}`"));
@@ -262,6 +309,14 @@ fn validate_config(config: &ProjectConfig) -> Result<(), String> {
             || suppression.rationale.trim().is_empty()
         {
             return Err("Suppression requires path, owner, and rationale".to_owned());
+        }
+        if let Some(expires) = &suppression.expires {
+            parse_date(expires).ok_or_else(|| {
+                format!(
+                    "Suppression for `{}` requires expires in valid YYYY-MM-DD form",
+                    suppression.owner
+                )
+            })?;
         }
     }
     for primitive in &config.house_style.approved_primitives {
@@ -341,6 +396,49 @@ fn validate_config(config: &ProjectConfig) -> Result<(), String> {
     Ok(())
 }
 
+#[must_use]
+pub fn suppression_is_expired(suppression: &Suppression) -> bool {
+    let Some(expires) = suppression.expires.as_deref() else {
+        return false;
+    };
+    let Some(expiry_day) = parse_date(expires) else {
+        return true;
+    };
+    let current_day = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| (duration.as_secs() / 86_400) as i64);
+    expiry_day < current_day
+}
+
+fn parse_date(value: &str) -> Option<i64> {
+    let mut parts = value.split('-');
+    let year = parts.next()?.parse::<i64>().ok()?;
+    let month = parts.next()?.parse::<i64>().ok()?;
+    let day = parts.next()?.parse::<i64>().ok()?;
+    if parts.next().is_some()
+        || !(1..=12).contains(&month)
+        || !(1..=days_in_month(year, month)).contains(&day)
+    {
+        return None;
+    }
+    let adjusted_year = year - i64::from(month <= 2);
+    let era = adjusted_year.div_euclid(400);
+    let year_of_era = adjusted_year - era * 400;
+    let shifted_month = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * shifted_month + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
+}
+
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 => 28,
+        _ => 31,
+    }
+}
+
 pub fn resolve_scopes(
     repository_root: &Path,
     config: &ProjectConfig,
@@ -380,6 +478,7 @@ pub fn resolve_scopes(
             &config.suppressions,
             &config.rules,
             &config.custom_archetypes,
+            &config.class_functions,
             &config.resources,
             config.mode,
         ))
@@ -393,6 +492,7 @@ pub fn resolve_scopes(
             suppressions: config.suppressions.clone(),
             rules: config.rules.clone(),
             custom_archetypes: config.custom_archetypes.clone(),
+            class_functions: config.class_functions.clone(),
             route_overrides: scope.routes.clone(),
             resources: config.resources.clone(),
             mode: config.mode,

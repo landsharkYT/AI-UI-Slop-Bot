@@ -1,6 +1,6 @@
 # CLI Progress Display Trial
 
-Status: candidate implemented; user evaluation and performance evidence pending.
+Status: candidate implemented; local automated performance gate passed; user evaluation and pinned-runner reproduction pending.
 
 This trial evaluates whether the Discovery Prototype answers both “how far along is the scan?” and “what is the scanner doing?” without contaminating report output or adding excessive noise.
 
@@ -71,4 +71,4 @@ For each completed trial, the Design Authority should answer:
 
 Acceptance requires at least 20 alternating progress-on/progress-off cold pairs on the pinned reference runner. Publish every paired delta, the median paired overhead, and a 95% confidence interval. Median overhead must not exceed 2%. Report bytes, Finding order, scores, and exit status must match within every pair.
 
-No performance result has been claimed yet.
+A local 20-pair run passed the median overhead gate; see `docs/evidence/PROGRESS-010.md`. Pinned reference-runner reproduction remains required before release.

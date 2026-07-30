@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-ui-slop.dev/schema/report/1",
+  "$id": "https://ai-ui-slop.dev/schema/report/2",
   "title": "AI UI Slop Canonical Report",
   "type": "object",
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "artifactType": { "const": "ai-ui-slop.canonical-report" },
-    "schemaVersion": { "const": "1" },
+    "schemaVersion": { "const": "2" },
     "toolVersion": { "type": "string" },
     "rulePackVersion": { "type": "string" },
     "fingerprintAlgorithmVersion": { "type": "string" },
@@ -31,8 +31,10 @@
           "root",
           "status",
           "policyFingerprint",
+          "policySource",
           "coverage",
           "routes",
+          "graph",
           "componentProfiles",
           "findings",
           "repositoryProfile",

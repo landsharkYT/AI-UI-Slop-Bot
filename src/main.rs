@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -9,7 +10,7 @@ use std::{
 use ai_ui_slop::{
     BaselineArtifact, ProgressEvent, RepositoryRequest, accept_candidate, analyze_repository,
     analyze_repository_with_progress, compare_baseline, create_candidate, page_archetype_catalog,
-    policy, render_refactoring_brief, rule_catalog,
+    policy, preview_baseline_migration, render_refactoring_brief, rule_catalog,
 };
 use serde_json::{Value, json};
 
@@ -31,6 +32,8 @@ struct ScanOptions {
     root: PathBuf,
     format: OutputFormat,
     progress: ProgressMode,
+    trusted_policy_root: Option<PathBuf>,
+    jobs: usize,
 }
 
 fn main() -> ExitCode {
@@ -70,16 +73,102 @@ fn run() -> Result<(), (u8, String)> {
 }
 
 fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
+    let repository_root = options.root.canonicalize().map_err(|error| {
+        (
+            2,
+            format!("cannot open {}: {error}", options.root.display()),
+        )
+    })?;
     let show_progress = options.progress != ProgressMode::Never;
     let started = Instant::now();
-    let report = analyze_repository_with_progress(RepositoryRequest::new(&options.root), |event| {
-        if show_progress {
+    let mut progress_renderer = ProgressRenderer::default();
+    let mut request = RepositoryRequest::new(&repository_root);
+    if let Some(trusted_policy_root) = &options.trusted_policy_root {
+        request = request.with_trusted_policy_root(trusted_policy_root);
+    }
+    request = request.with_jobs(options.jobs);
+    let mut report = analyze_repository_with_progress(request, |event| {
+        if show_progress && progress_renderer.should_render(&event) {
             render_progress(&event, started);
         }
     })
     .map_err(|error| (2, error.to_string()))?;
+    let policy_root = options
+        .trusted_policy_root
+        .as_deref()
+        .unwrap_or(&repository_root);
+    let config = policy::load_config(policy_root).map_err(|message| (2, message))?;
+    let incomplete = report
+        .scopes
+        .iter()
+        .any(|scope| scope.status == "incomplete");
+    let deferred_error = if config.mode == policy::AnalysisMode::Enforcement {
+        let baseline_path = policy_root.join("ai-ui-slop.baseline.json");
+        if !baseline_path.is_file() {
+            report.summary.outcome = "invalid_lifecycle".to_owned();
+            Some((
+                2,
+                "enforcement requires a compatible Reviewed Baseline".to_owned(),
+            ))
+        } else {
+            let baseline = read_baseline(&baseline_path)?;
+            let comparison = compare_baseline(&report, &baseline);
+            if !comparison.compatible {
+                report.summary.outcome = "invalid_lifecycle".to_owned();
+                Some((
+                    2,
+                    "Reviewed Baseline is incompatible with effective policy".to_owned(),
+                ))
+            } else if incomplete {
+                report.summary.outcome = "insufficient_analysis".to_owned();
+                Some((
+                    3,
+                    "analysis coverage fell below the enforcement floor".to_owned(),
+                ))
+            } else if comparison.enforceable_regression_count > 0 {
+                report.summary.outcome = "policy_regression".to_owned();
+                Some((
+                    1,
+                    format!(
+                        "{} enforceable new or worsened Finding(s)",
+                        comparison.enforceable_regression_count
+                    ),
+                ))
+            } else {
+                None
+            }
+        }
+    } else if incomplete {
+        report.summary.outcome = "insufficient_analysis".to_owned();
+        Some((
+            3,
+            "analysis coverage did not satisfy the active coverage floor".to_owned(),
+        ))
+    } else {
+        None
+    };
     let json = serialize_pretty(&report)?;
     let markdown = render_refactoring_brief(&report);
+    if json.len() as u64 > config.resources.max_json_bytes {
+        return Err((
+            3,
+            format!(
+                "canonical JSON requires {} bytes under maxJsonBytes={}",
+                json.len(),
+                config.resources.max_json_bytes
+            ),
+        ));
+    }
+    if markdown.len() as u64 > config.resources.max_markdown_bytes {
+        return Err((
+            3,
+            format!(
+                "Refactoring Brief requires {} bytes under maxMarkdownBytes={}",
+                markdown.len(),
+                config.resources.max_markdown_bytes
+            ),
+        ));
+    }
 
     if show_progress {
         render_progress(
@@ -87,13 +176,7 @@ fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
             started,
         );
     }
-    let reports = options.root.join(".ai-ui-slop").join("reports");
-    fs::create_dir_all(&reports).map_err(|error| {
-        (
-            4,
-            format!("could not create {}: {error}", reports.display()),
-        )
-    })?;
+    let reports = create_artifact_directory(&repository_root, Path::new(".ai-ui-slop/reports"))?;
     write_generated(
         &reports.join("report.json"),
         json.as_bytes(),
@@ -125,54 +208,30 @@ fn run_scan(options: ScanOptions) -> Result<(), (u8, String)> {
         OutputFormat::Terminal => render_terminal_report(&report),
     }
 
-    let config = policy::load_config(&options.root).map_err(|message| (2, message))?;
-    if config.mode == policy::AnalysisMode::Enforcement {
-        let baseline_path = options.root.join("ai-ui-slop.baseline.json");
-        if !baseline_path.is_file() {
-            return Err((
-                2,
-                "enforcement requires a compatible Reviewed Baseline".to_owned(),
-            ));
-        }
-        let baseline = read_baseline(&baseline_path)?;
-        let comparison = compare_baseline(&report, &baseline);
-        if !comparison.compatible {
-            return Err((
-                2,
-                "Reviewed Baseline is incompatible with effective policy".to_owned(),
-            ));
-        }
-        if report
-            .scopes
-            .iter()
-            .any(|scope| scope.status == "incomplete")
-        {
-            return Err((
-                3,
-                "analysis coverage fell below the enforcement floor".to_owned(),
-            ));
-        }
-        if comparison.enforceable_regression_count > 0 {
-            return Err((
-                1,
-                format!(
-                    "{} enforceable new or worsened Finding(s)",
-                    comparison.enforceable_regression_count
-                ),
-            ));
-        }
-    }
-    if report
-        .scopes
-        .iter()
-        .any(|scope| scope.status == "incomplete")
-    {
-        return Err((
-            3,
-            "analysis coverage did not satisfy the active coverage floor".to_owned(),
-        ));
+    if let Some(error) = deferred_error {
+        return Err(error);
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct ProgressRenderer {
+    seen_phases: BTreeSet<String>,
+    last_overall: u16,
+}
+
+impl ProgressRenderer {
+    fn should_render(&mut self, event: &ProgressEvent) -> bool {
+        let phase_changed = self.seen_phases.insert(event.phase.clone());
+        let advanced = event.overall_completed.saturating_sub(self.last_overall) >= 5;
+        let terminal = matches!(event.overall_completed, 0 | 100);
+        if phase_changed || advanced || terminal {
+            self.last_overall = event.overall_completed;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
@@ -194,22 +253,25 @@ fn run_init(arguments: &[String]) -> Result<(), (u8, String)> {
   "suppressions": [],
   "rules": {},
   "customArchetypes": [],
+  "classFunctions": ["clsx", "classnames", "classNames", "cn", "twMerge"],
   "resources": {
     "maxFiles": 20000,
-    "maxSourceBytes": 536870912
+    "maxSourceBytes": 536870912,
+    "maxFileBytes": 2097152,
+    "maxGraphEdges": 2000000,
+    "maxScopes": 64,
+    "maxDiagnostics": 10000,
+    "maxJsonBytes": 268435456,
+    "maxMarkdownBytes": 67108864
   }
 }
 "#;
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&destination)
-        .map_err(|error| {
-            (
-                2,
-                format!("refusing to overwrite {}: {error}", destination.display()),
-            )
-        })?;
+    let mut file = open_new_private(&destination).map_err(|error| {
+        (
+            2,
+            format!("refusing to overwrite {}: {error}", destination.display()),
+        )
+    })?;
     file.write_all(draft.as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|error| {
@@ -293,9 +355,8 @@ fn run_baseline(arguments: &[String]) -> Result<(), (u8, String)> {
             let report = analyze_repository(RepositoryRequest::new(&root))
                 .map_err(|error| (2, error.to_string()))?;
             let candidate = create_candidate(&report);
-            let destination = root.join(".ai-ui-slop").join("baseline-candidate.json");
-            fs::create_dir_all(destination.parent().expect("candidate has parent"))
-                .map_err(|error| (4, error.to_string()))?;
+            let artifact_directory = create_artifact_directory(&root, Path::new(".ai-ui-slop"))?;
+            let destination = artifact_directory.join("baseline-candidate.json");
             let bytes = serialize_pretty(&candidate)?;
             write_generated(
                 &destination,
@@ -303,10 +364,32 @@ fn run_baseline(arguments: &[String]) -> Result<(), (u8, String)> {
                 GeneratedKind::Json("ai-ui-slop.baseline"),
                 force,
             )?;
+            let reviewed_path = root.join("ai-ui-slop.baseline.json");
+            let preview_summary = if reviewed_path.is_file() {
+                let reviewed = read_baseline(&reviewed_path)?;
+                let preview = preview_baseline_migration(&report, &reviewed);
+                let preview_path = artifact_directory.join("baseline-preview.json");
+                let preview_bytes = serialize_pretty(&preview)?;
+                write_generated(
+                    &preview_path,
+                    preview_bytes.as_bytes(),
+                    GeneratedKind::Json("ai-ui-slop.baseline-preview"),
+                    true,
+                )?;
+                format!(
+                    "; semantic preview contains {} change(s), {} ambiguous",
+                    preview.changes.len(),
+                    preview.ambiguous_count
+                )
+            } else {
+                "; no Reviewed Baseline exists, so every candidate Finding requires initial review"
+                    .to_owned()
+            };
             println!(
-                "created unreviewed baseline candidate with {} Finding(s): {}",
+                "created unreviewed baseline candidate with {} Finding(s): {}{}",
                 candidate.findings.len(),
-                destination.display()
+                destination.display(),
+                preview_summary
             );
             Ok(())
         }
@@ -355,7 +438,14 @@ fn run_baseline_check(arguments: &[String]) -> Result<(), (u8, String)> {
         .map_err(|error| (2, error.to_string()))?;
     let comparison = compare_baseline(&report, &baseline);
     if format == OutputFormat::Json {
-        print!("{}", serialize_pretty(&comparison)?);
+        if comparison.compatible {
+            print!("{}", serialize_pretty(&comparison)?);
+        } else {
+            print!(
+                "{}",
+                serialize_pretty(&preview_baseline_migration(&report, &baseline))?
+            );
+        }
     } else {
         println!(
             "baseline {}: {} change(s), {} enforceable regression(s)",
@@ -409,9 +499,8 @@ fn run_feedback(arguments: &[String]) -> Result<(), (u8, String)> {
         "instructions": "Review and redact this local bundle before sharing.",
         "report": report,
     });
-    let destination = root.join(".ai-ui-slop").join("feedback-bundle.json");
-    fs::create_dir_all(destination.parent().expect("feedback has parent"))
-        .map_err(|error| (4, error.to_string()))?;
+    let destination =
+        create_artifact_directory(&root, Path::new(".ai-ui-slop"))?.join("feedback-bundle.json");
     let bytes = serialize_pretty(&bundle)?;
     write_generated(
         &destination,
@@ -457,7 +546,7 @@ fn run_schema(arguments: &[String]) -> Result<(), (u8, String)> {
 
 fn run_version() -> Result<(), (u8, String)> {
     println!(
-        "ai-ui-slop {}\nreport-schema 1\nconfig-schema 1\nrule-pack 1.0.0-alpha.1\nfingerprint-algorithm 1\nevidence-digest-algorithm 1",
+        "ai-ui-slop {}\nreport-schema 2\nconfig-schema 1\nbaseline-schema 2\nrule-pack 1.0.0-beta.1\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
         env!("CARGO_PKG_VERSION")
     );
     Ok(())
@@ -470,6 +559,8 @@ fn parse_scan_options(
     let mut root = None;
     let mut format = OutputFormat::Terminal;
     let mut progress = ProgressMode::Auto;
+    let mut trusted_policy_root = None;
+    let mut jobs = std::thread::available_parallelism().map_or(1, usize::from);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--format" => {
@@ -490,6 +581,22 @@ fn parse_scan_options(
                     None => return Err((2, "`--progress` requires a value".to_owned())),
                 };
             }
+            "--trusted-policy-root" => {
+                trusted_policy_root =
+                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                        (2, "`--trusted-policy-root` requires a path".to_owned())
+                    })?));
+            }
+            "--jobs" => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| (2, "`--jobs` requires a positive integer".to_owned()))?;
+                jobs = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|jobs| *jobs > 0)
+                    .ok_or_else(|| (2, "`--jobs` requires a positive integer".to_owned()))?;
+            }
             value if value.starts_with('-') => {
                 return Err((2, format!("unknown scan option `{value}`")));
             }
@@ -501,6 +608,8 @@ fn parse_scan_options(
         root: root.unwrap_or_else(|| PathBuf::from(".")),
         format,
         progress,
+        trusted_policy_root,
+        jobs,
     })
 }
 
@@ -639,6 +748,12 @@ fn write_generated(
             format!("artifact path has no parent: {}", path.display()),
         )
     })?;
+    if fs::symlink_metadata(parent).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err((
+            2,
+            format!("refusing symlink artifact directory {}", parent.display()),
+        ));
+    }
     fs::create_dir_all(parent).map_err(|error| (4, error.to_string()))?;
     let file_name = path
         .file_name()
@@ -646,10 +761,7 @@ fn write_generated(
         .ok_or_else(|| (4, format!("invalid artifact path {}", path.display())))?;
     let temporary = parent.join(format!(".{file_name}.{}.tmp", std::process::id()));
     let result = (|| -> io::Result<()> {
-        let mut file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
+        let mut file = open_new_private(&temporary)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, path)
@@ -658,6 +770,68 @@ fn write_generated(
         let _ = fs::remove_file(&temporary);
     }
     result.map_err(|error| (4, format!("could not write {}: {error}", path.display())))
+}
+
+fn open_new_private(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+fn create_artifact_directory(root: &Path, relative: &Path) -> Result<PathBuf, (u8, String)> {
+    if relative.is_absolute()
+        || relative.components().any(|component| {
+            !matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err((
+            2,
+            "artifact directory must stay inside repository".to_owned(),
+        ));
+    }
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            continue;
+        };
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err((
+                    2,
+                    format!("refusing symlink artifact directory {}", current.display()),
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err((
+                    2,
+                    format!(
+                        "artifact directory is not a directory: {}",
+                        current.display()
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir(&current).map_err(|error| {
+                    (
+                        4,
+                        format!("could not create {}: {error}", current.display()),
+                    )
+                })?;
+            }
+            Err(error) => return Err((4, error.to_string())),
+        }
+    }
+    Ok(current)
 }
 
 fn read_baseline(path: &Path) -> Result<BaselineArtifact, (u8, String)> {

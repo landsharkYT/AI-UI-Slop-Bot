@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CanonicalReport, Finding};
 
-pub const BASELINE_SCHEMA_VERSION: &str = "1";
+pub const BASELINE_SCHEMA_VERSION: &str = "2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +75,16 @@ pub struct BaselineChange {
     pub owner: String,
     pub previous_score: Option<u8>,
     pub current_score: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BaselineMigrationPreview {
+    pub artifact_type: String,
+    pub schema_version: String,
+    pub compatible: bool,
+    pub changes: Vec<BaselineChange>,
+    pub ambiguous_count: usize,
 }
 
 #[must_use]
@@ -248,6 +258,102 @@ pub fn compare_baseline(
         compatible: true,
         changes,
         enforceable_regression_count,
+    }
+}
+
+#[must_use]
+pub fn preview_baseline_migration(
+    report: &CanonicalReport,
+    baseline: &BaselineArtifact,
+) -> BaselineMigrationPreview {
+    let comparison = compare_baseline(report, baseline);
+    if comparison.compatible {
+        return BaselineMigrationPreview {
+            artifact_type: "ai-ui-slop.baseline-preview".to_owned(),
+            schema_version: BASELINE_SCHEMA_VERSION.to_owned(),
+            compatible: true,
+            changes: comparison.changes,
+            ambiguous_count: 0,
+        };
+    }
+
+    type SemanticKey = (String, String, String, String);
+    let mut previous = BTreeMap::<SemanticKey, Vec<&BaselineFinding>>::new();
+    for finding in &baseline.findings {
+        previous
+            .entry((
+                finding.scope_id.clone(),
+                finding.rule_id.clone(),
+                finding.path.clone(),
+                finding.owner.clone(),
+            ))
+            .or_default()
+            .push(finding);
+    }
+    let mut current = BTreeMap::<SemanticKey, Vec<&Finding>>::new();
+    for scope in &report.scopes {
+        for finding in &scope.findings {
+            current
+                .entry((
+                    scope.id.clone(),
+                    finding.rule_id.clone(),
+                    finding.path.clone(),
+                    finding.owner.clone(),
+                ))
+                .or_default()
+                .push(finding);
+        }
+    }
+    let keys = previous
+        .keys()
+        .chain(current.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changes = Vec::new();
+    let mut ambiguous_count = 0;
+    for key in keys {
+        let old = previous.get(&key).map(Vec::as_slice).unwrap_or_default();
+        let new = current.get(&key).map(Vec::as_slice).unwrap_or_default();
+        let kind = if old.len() > 1 || new.len() > 1 {
+            ambiguous_count += 1;
+            "ambiguous"
+        } else {
+            match (old.first(), new.first()) {
+                (None, Some(_)) => "added",
+                (Some(_), None) => "removed",
+                (Some(old), Some(new))
+                    if old.fingerprint == new.fingerprint
+                        && old.evidence_digest == new.evidence_digest
+                        && old.score == new.score =>
+                {
+                    continue;
+                }
+                (Some(_), Some(_)) => "changed",
+                (None, None) => continue,
+            }
+        };
+        let old = old.first().copied();
+        let new = new.first().copied();
+        changes.push(BaselineChange {
+            kind: kind.to_owned(),
+            scope_id: key.0,
+            fingerprint: new
+                .map(|finding| finding.fingerprint.clone())
+                .or_else(|| old.map(|finding| finding.fingerprint.clone()))
+                .unwrap_or_default(),
+            rule_id: key.1,
+            path: key.2,
+            owner: key.3,
+            previous_score: old.map(|finding| finding.score),
+            current_score: new.map(|finding| finding.score),
+        });
+    }
+    BaselineMigrationPreview {
+        artifact_type: "ai-ui-slop.baseline-preview".to_owned(),
+        schema_version: BASELINE_SCHEMA_VERSION.to_owned(),
+        compatible: false,
+        changes,
+        ambiguous_count,
     }
 }
 

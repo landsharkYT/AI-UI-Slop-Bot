@@ -9,6 +9,10 @@ inputs:
     description: Workflow artifact name.
     required: false
     default: ai-ui-slop-report
+  trusted-policy-path:
+    description: Protected target-branch worktree containing policy and Reviewed Baseline.
+    required: false
+    default: ""
 
 outputs:
   exit-code:
@@ -29,9 +33,14 @@ runs:
       shell: bash
       env:
         AI_UI_SLOP_BINARY: ${{ inputs.binary-path }}
+        AI_UI_SLOP_TRUSTED_POLICY: ${{ inputs.trusted-policy-path }}
       run: |
         set +e
-        "$AI_UI_SLOP_BINARY" scan "$GITHUB_WORKSPACE" --format terminal --progress auto
+        scan_args=(scan "$GITHUB_WORKSPACE" --format terminal --progress auto)
+        if [[ -n "$AI_UI_SLOP_TRUSTED_POLICY" ]]; then
+          scan_args+=(--trusted-policy-root "$AI_UI_SLOP_TRUSTED_POLICY")
+        fi
+        "$AI_UI_SLOP_BINARY" "${scan_args[@]}"
         scan_status="$?"
         set -e
         case "$scan_status" in
@@ -40,8 +49,9 @@ runs:
         esac
         echo "exit-code=$scan_status" >> "$GITHUB_OUTPUT"
 
-    - name: Upload canonical reports
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+    - id: upload
+      name: Upload canonical reports
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       if: ${{ always() && hashFiles('.ai-ui-slop/reports/report.json') != '' }}
       with:
         name: ${{ inputs.artifact-name }}
@@ -58,6 +68,8 @@ runs:
           echo "## AI UI Slop Bot"
           echo
           echo "Scanner exit code: \`${{ steps.scan.outputs.exit-code }}\`"
+          echo
+          echo "[Download canonical report artifacts](${{ steps.upload.outputs.artifact-url }})"
           echo
           cat "$GITHUB_WORKSPACE/.ai-ui-slop/reports/refactoring-brief.md"
         } >> "$GITHUB_STEP_SUMMARY"

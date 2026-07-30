@@ -2,7 +2,7 @@
 
 An evidence-first Rust analyzer for detecting repeated, context-insensitive frontend aesthetics—the “everything is a floating gradient card” family of patterns common in generated interfaces.
 
-The repository is at **Shot 1 V1 alpha**: the complete product breadth is represented end to end, but calibration, platform qualification, performance/security hardening, and customer evidence remain Shot 2 and release-gate work. It must not be presented as validated V1.
+The repository is at the **Shot 2 technical candidate** (`0.2.0`): product breadth and the principal hardening seams are represented end to end, but external calibration, hosted platform qualification, and remaining release evidence are incomplete. It must not be presented as Validated MVP or Full V1.
 
 ## Run it
 
@@ -30,6 +30,7 @@ Use `--progress always` to exercise the candidate progress display or `--progres
 ai-ui-slop init ./repo
 ai-ui-slop config validate ./repo --effective default
 ai-ui-slop scan ./repo --format json
+ai-ui-slop scan ./pull-request --trusted-policy-root ./protected-base --jobs 4
 ai-ui-slop explain effect-stacking
 ai-ui-slop baseline create ./repo
 ai-ui-slop baseline accept ./repo --approver maintainer --rationale "Reviewed debt"
@@ -50,11 +51,11 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
 ```
 
-The public seam tests cover the nine rule paths, Page Archetype catalogs and custom definitions, monorepository scopes, House Style and Suppression policy, baselines, command lifecycles, recurrence thresholds, determinism, counterexamples, partial parsing, progress, and report artifacts.
+The public seam tests cover reachable-state class composition, typed repository graphs, Trusted Policy, resource ceilings, hostile filesystem and Markdown inputs, baseline migration, parallel determinism, the nine rule paths, Page Archetypes, command lifecycles, progress, and report artifacts.
 
-## Prototype limits
+## Candidate limits
 
-Shot 1 intentionally leaves finite runtime class composition, CSS/config resolution, complete component/import/route graphs, cancellation, resource ceilings, deterministic parallelism, cross-platform release qualification, authenticated distribution, and blind customer calibration for Shot 2. See the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
+Shot 2 still leaves complete CVA/Tailwind/CSS and framework-adapter resolution, signal cancellation qualification, allocator-accounted memory enforcement, broad fuzz/mutation evidence, hosted release smoke tests, and blind customer calibration. See [Shot 2](docs/shot-2.md) and the explicit [support matrix](docs/support-matrix.md). A clean result is not proof of absence when coverage diagnostics are present.
 
 ## License
 

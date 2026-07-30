@@ -8,23 +8,45 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AnalyzedOwner, Finding, ProgressEvent, ScanPolicy, ScanRequest, page_archetype_catalog,
-    policy::{EffectiveScope, PolicyDisposition, load_config, resolve_scopes},
+    AnalyzedOwner, Finding, ProgressEvent, RepositoryGraph, ScanPolicy, ScanRequest,
+    graph::{GraphRequest, build_repository_graph},
+    page_archetype_catalog,
+    policy::{
+        EffectiveScope, PolicyDisposition, load_config, resolve_scopes, suppression_is_expired,
+    },
     scan_with_progress,
 };
 
-pub const REPORT_SCHEMA_VERSION: &str = "1";
-pub const RULE_PACK_VERSION: &str = "1.0.0-alpha.1";
+pub const REPORT_SCHEMA_VERSION: &str = "2";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.1";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
     pub root: PathBuf,
+    pub trusted_policy_root: Option<PathBuf>,
+    pub jobs: usize,
 }
 
 impl RepositoryRequest {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            trusted_policy_root: None,
+            jobs: std::thread::available_parallelism().map_or(1, usize::from),
+        }
+    }
+
+    #[must_use]
+    pub fn with_trusted_policy_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.trusted_policy_root = Some(root.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_jobs(mut self, jobs: usize) -> Self {
+        self.jobs = jobs.max(1);
+        self
     }
 }
 
@@ -77,8 +99,10 @@ pub struct ScopeReport {
     pub root: String,
     pub status: String,
     pub policy_fingerprint: String,
+    pub policy_source: String,
     pub coverage: CoverageVector,
     pub routes: Vec<RouteClassification>,
+    pub graph: RepositoryGraph,
     pub component_profiles: Vec<ComponentProfile>,
     pub findings: Vec<Finding>,
     pub repository_profile: RepositoryProfile,
@@ -161,21 +185,94 @@ pub fn analyze_repository_with_progress(
     let root = request.root.canonicalize().map_err(|error| {
         RepositoryError::new(format!("cannot open {}: {error}", request.root.display()))
     })?;
-    let config = load_config(&root).map_err(RepositoryError::new)?;
+    let policy_root = request
+        .trusted_policy_root
+        .as_ref()
+        .map_or_else(|| Ok(root.clone()), |path| path.canonicalize())
+        .map_err(|error| {
+            RepositoryError::new(format!("cannot open trusted policy root: {error}"))
+        })?;
+    let policy_source = if policy_root == root {
+        "checkout"
+    } else {
+        "trusted"
+    };
+    let policy_changed = policy_root != root
+        && fs::read(root.join("ai-ui-slop.config.jsonc")).ok()
+            != fs::read(policy_root.join("ai-ui-slop.config.jsonc")).ok();
+    let config = load_config(&policy_root).map_err(RepositoryError::new)?;
     let effective_scopes = resolve_scopes(&root, &config).map_err(RepositoryError::new)?;
-    let mut scopes = Vec::new();
     let scope_count = effective_scopes.len().max(1);
-    for (scope_index, effective) in effective_scopes.into_iter().enumerate() {
-        let mut scoped_progress = |mut event: ProgressEvent| {
-            let completed = scope_index.saturating_mul(90)
-                + usize::from(event.overall_completed).saturating_mul(90) / 100;
-            event.overall_completed = (completed / scope_count).min(90) as u16;
-            event.overall_total = 100;
-            event.detail = format!("scope `{}`: {}", effective.id, event.detail);
-            progress(event);
-        };
-        scopes.push(analyze_scope(&effective, &mut scoped_progress)?);
-    }
+    let mut scopes = if request.jobs == 1 || effective_scopes.len() <= 1 {
+        let mut scopes = Vec::new();
+        for (scope_index, effective) in effective_scopes.iter().enumerate() {
+            let mut scoped_progress = |mut event: ProgressEvent| {
+                let completed = scope_index.saturating_mul(90)
+                    + usize::from(event.overall_completed).saturating_mul(90) / 100;
+                event.overall_completed = (completed / scope_count).min(90) as u16;
+                event.overall_total = 100;
+                event.detail = format!("scope `{}`: {}", effective.id, event.detail);
+                progress(event);
+            };
+            scopes.push(analyze_scope(
+                effective,
+                policy_source,
+                policy_changed,
+                &mut scoped_progress,
+            )?);
+        }
+        scopes
+    } else {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let next = AtomicUsize::new(0);
+        let worker_count = request.jobs.min(effective_scopes.len());
+        let worker_results = std::thread::scope(|thread_scope| {
+            let mut handles = Vec::new();
+            for _ in 0..worker_count {
+                let next = &next;
+                let effective_scopes = &effective_scopes;
+                handles.push(thread_scope.spawn(move || {
+                    let mut results = Vec::new();
+                    loop {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(effective) = effective_scopes.get(index) else {
+                            break;
+                        };
+                        results.push((
+                            index,
+                            analyze_scope(effective, policy_source, policy_changed, &mut |_| {}),
+                        ));
+                    }
+                    results
+                }));
+            }
+            handles
+                .into_iter()
+                .map(|handle| handle.join())
+                .collect::<Vec<_>>()
+        });
+        let mut indexed = Vec::new();
+        for worker in worker_results {
+            indexed.extend(worker.map_err(|_| RepositoryError::new("analysis worker panicked"))?);
+        }
+        indexed.sort_by_key(|(index, _)| *index);
+        let mut scopes = Vec::with_capacity(indexed.len());
+        for (index, result) in indexed {
+            let scope = result?;
+            progress(ProgressEvent {
+                phase: "aggregating".to_owned(),
+                completed: index + 1,
+                total: Some(scope_count),
+                overall_completed: ((index + 1) * 90 / scope_count) as u16,
+                overall_total: 100,
+                unresolved: scope.diagnostics.len(),
+                detail: format!("scope `{}` completed on bounded worker pool", scope.id),
+            });
+            scopes.push(scope);
+        }
+        scopes
+    };
+    scopes.sort_by(|left, right| left.id.cmp(&right.id));
     let finding_count = scopes.iter().map(|scope| scope.findings.len()).sum();
     let outcome = if scopes.iter().any(|scope| scope.status == "incomplete") {
         "incomplete"
@@ -187,7 +284,7 @@ pub fn analyze_repository_with_progress(
         schema_version: REPORT_SCHEMA_VERSION.to_owned(),
         tool_version: env!("CARGO_PKG_VERSION").to_owned(),
         rule_pack_version: RULE_PACK_VERSION.to_owned(),
-        fingerprint_algorithm_version: "1".to_owned(),
+        fingerprint_algorithm_version: "2".to_owned(),
         evidence_digest_algorithm_version: "1".to_owned(),
         summary: ReportSummary {
             outcome: outcome.to_owned(),
@@ -200,8 +297,38 @@ pub fn analyze_repository_with_progress(
 
 fn analyze_scope(
     effective: &EffectiveScope,
+    policy_source: &str,
+    policy_changed: bool,
     progress: &mut impl FnMut(ProgressEvent),
 ) -> Result<ScopeReport, RepositoryError> {
+    let active_suppressions = effective
+        .suppressions
+        .iter()
+        .filter(|suppression| !suppression_is_expired(suppression))
+        .collect::<Vec<_>>();
+    let mut policy_diagnostics = effective
+        .suppressions
+        .iter()
+        .filter(|suppression| suppression_is_expired(suppression))
+        .map(|suppression| ScopeDiagnostic {
+            reason: "expired-suppression".to_owned(),
+            path: suppression.path.clone(),
+            detail: format!(
+                "Suppression for `{}` and rule `{}` expired at {}",
+                suppression.owner,
+                suppression.rule_id,
+                suppression.expires.as_deref().unwrap_or("unknown")
+            ),
+        })
+        .collect::<Vec<_>>();
+    if policy_changed {
+        policy_diagnostics.push(ScopeDiagnostic {
+            reason: "policy-change-proposal".to_owned(),
+            path: "ai-ui-slop.config.jsonc".to_owned(),
+            detail: "checkout policy differs from Trusted Policy and did not affect this analysis"
+                .to_owned(),
+        });
+    }
     let mut request = ScanRequest::new(&effective.absolute_root);
     request.analysis_scope.clone_from(&effective.id);
     request.policy = ScanPolicy {
@@ -223,8 +350,7 @@ fn analyze_scope(
             .iter()
             .map(|primitive| (primitive.path.clone(), primitive.owner.clone()))
             .collect(),
-        suppressions: effective
-            .suppressions
+        suppressions: active_suppressions
             .iter()
             .map(|suppression| {
                 (
@@ -259,16 +385,80 @@ fn analyze_scope(
             .iter()
             .map(|(rule_id, policy)| (rule_id.clone(), policy.minimum_confidence.clone()))
             .collect(),
+        class_functions: effective.class_functions.iter().cloned().collect(),
         max_files: effective.resources.max_files,
         max_source_bytes: effective.resources.max_source_bytes,
+        max_file_bytes: effective.resources.max_file_bytes,
+        max_diagnostics: effective.resources.max_diagnostics,
     };
     let scan_report = scan_with_progress(request, progress)
         .map_err(|error| RepositoryError::new(error.to_string()))?;
+    for suppression in active_suppressions {
+        let matched = scan_report.findings.iter().any(|finding| {
+            finding.rule_id == suppression.rule_id
+                && finding.path == suppression.path
+                && finding.owner == suppression.owner
+        });
+        if !matched {
+            policy_diagnostics.push(ScopeDiagnostic {
+                reason: "unmatched-suppression".to_owned(),
+                path: suppression.path.clone(),
+                detail: format!(
+                    "Suppression for `{}` and rule `{}` matched no Finding",
+                    suppression.owner, suppression.rule_id
+                ),
+            });
+        }
+    }
+    for primitive in &effective.house_style.approved_primitives {
+        let matched = scan_report
+            .owners
+            .iter()
+            .any(|owner| owner.path == primitive.path && owner.owner == primitive.owner);
+        if !matched {
+            policy_diagnostics.push(ScopeDiagnostic {
+                reason: "unmatched-approved-primitive".to_owned(),
+                path: primitive.path.clone(),
+                detail: format!(
+                    "approved primitive `{}` matched no component owner",
+                    primitive.owner
+                ),
+            });
+        }
+    }
     let routes = classify_routes(
         &effective.absolute_root,
         &effective.custom_archetypes,
         &effective.route_overrides,
     )?;
+    let graph_routes = routes
+        .iter()
+        .map(|route| {
+            (
+                route.path.clone(),
+                route.owner.clone(),
+                route
+                    .archetypes
+                    .iter()
+                    .map(|archetype| archetype.id.clone())
+                    .collect(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let approved_primitives = effective
+        .house_style
+        .approved_primitives
+        .iter()
+        .map(|primitive| (primitive.path.clone(), primitive.owner.clone()))
+        .collect::<Vec<_>>();
+    let graph_analysis = build_repository_graph(GraphRequest {
+        root: &effective.absolute_root,
+        owners: &scan_report.owners,
+        routes: &graph_routes,
+        approved_primitives: &approved_primitives,
+        max_edges: effective.resources.max_graph_edges,
+    })
+    .map_err(RepositoryError::new)?;
     let component_profiles = aggregate_components(&scan_report.findings, &scan_report.owners);
     let repository_profile = aggregate_repository(&component_profiles, &scan_report.findings);
     let unresolved = scan_report.coverage.unresolved.len() as u64;
@@ -285,6 +475,7 @@ fn analyze_scope(
             detail: issue.detail,
         })
         .collect::<Vec<_>>();
+    diagnostics.append(&mut policy_diagnostics);
     let coverage = CoverageVector {
         parse: dimension(analyzed, discovered, unresolved),
         style_resolution: dimension(
@@ -295,12 +486,13 @@ fn analyze_scope(
                 .style_expressions_total
                 .saturating_sub(scan_report.coverage.style_expressions_resolved) as u64,
         ),
-        component_graph: CoverageDimension {
-            numerator: 0,
-            denominator: 0,
-            status: "not_applicable".to_owned(),
-            unresolved: 0,
-        },
+        component_graph: dimension(
+            graph_analysis.resolved_edges,
+            graph_analysis.candidate_edges,
+            graph_analysis
+                .candidate_edges
+                .saturating_sub(graph_analysis.resolved_edges),
+        ),
         route: if route_total == 0 {
             CoverageDimension {
                 numerator: 0,
@@ -316,6 +508,10 @@ fn analyze_scope(
     let style_sufficient = coverage.style_resolution.denominator == 0
         || coverage.style_resolution.numerator.saturating_mul(100)
             >= coverage.style_resolution.denominator.saturating_mul(75);
+    let graph_sufficient = !graph_analysis.graph.truncated
+        && (coverage.component_graph.denominator == 0
+            || coverage.component_graph.numerator.saturating_mul(100)
+                >= coverage.component_graph.denominator.saturating_mul(70));
     if coverage.style_resolution.denominator > 0
         && coverage.style_resolution.numerator.saturating_mul(100)
             < coverage.style_resolution.denominator.saturating_mul(90)
@@ -327,7 +523,28 @@ fn analyze_scope(
                 .to_owned(),
         });
     }
-    let status = if parse_sufficient && style_sufficient {
+    if coverage.component_graph.denominator > 0
+        && coverage.component_graph.numerator.saturating_mul(100)
+            < coverage.component_graph.denominator.saturating_mul(85)
+    {
+        diagnostics.push(ScopeDiagnostic {
+            reason: "component-graph-coverage-warning".to_owned(),
+            path: effective.relative_root.clone(),
+            detail: "component-graph coverage is below the provisional 85% warning floor"
+                .to_owned(),
+        });
+    }
+    diagnostics.extend(
+        graph_analysis
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| ScopeDiagnostic {
+                reason: diagnostic.reason,
+                path: diagnostic.path,
+                detail: diagnostic.detail,
+            }),
+    );
+    let status = if parse_sufficient && style_sufficient && graph_sufficient {
         "complete"
     } else {
         "incomplete"
@@ -337,8 +554,10 @@ fn analyze_scope(
         root: effective.relative_root.clone(),
         status: status.to_owned(),
         policy_fingerprint: effective.fingerprint.clone(),
+        policy_source: policy_source.to_owned(),
         coverage,
         routes,
+        graph: graph_analysis.graph,
         component_profiles,
         findings: scan_report.findings,
         repository_profile,
@@ -419,12 +638,21 @@ pub fn render_refactoring_brief(report: &CanonicalReport) -> String {
 fn escape_markdown(value: &str) -> String {
     let mut escaped = String::new();
     for character in value.chars() {
-        if character.is_control() {
+        if character.is_control()
+            || matches!(
+                character,
+                '\u{061c}'
+                    | '\u{200e}'
+                    | '\u{200f}'
+                    | '\u{202a}'..='\u{202e}'
+                    | '\u{2066}'..='\u{2069}'
+            )
+        {
             escaped.push_str(&format!("\\u{{{:x}}}", character as u32));
         } else {
             if matches!(
                 character,
-                '\\' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#'
+                '\\' | '*' | '_' | '[' | ']' | '<' | '>' | '|' | '#' | '`'
             ) {
                 escaped.push('\\');
             }
@@ -435,7 +663,7 @@ fn escape_markdown(value: &str) -> String {
 }
 
 fn escape_inline_code(value: &str) -> String {
-    escape_markdown(value).replace('`', "\\`")
+    escape_markdown(value)
 }
 
 fn dimension(numerator: u64, denominator: u64, unresolved: u64) -> CoverageDimension {
