@@ -15,7 +15,7 @@ pub struct PageArchetypeDefinition {
     pub keywords: &'static [&'static str],
 }
 
-const RULES: [RuleDefinition; 9] = [
+const RULES: [RuleDefinition; 11] = [
     RuleDefinition {
         id: "repeated-decorative-shell",
         contract_version: "0.1.0-prototype",
@@ -85,6 +85,22 @@ const RULES: [RuleDefinition; 9] = [
         contract_version: "0.1.0-alpha",
         summary: "Uniform spacing and sizing erase distinctions between different content roles.",
         remediation: "Introduce hierarchy-driven rhythm changes rather than arbitrary variation.",
+        requires_routes: false,
+        requires_house_style: false,
+    },
+    RuleDefinition {
+        id: "framework-default-convergence",
+        contract_version: "0.1.0-alpha",
+        summary: "A stock framework palette and component recipe recur across distinct component owners.",
+        remediation: "Replace framework-default recipes with product-specific tokens, hierarchy, and component treatments.",
+        requires_routes: false,
+        requires_house_style: false,
+    },
+    RuleDefinition {
+        id: "control-surface-homogenization",
+        contract_version: "0.1.0-alpha",
+        summary: "Compact outlined surface chrome recurs across controls, content, and structural roles.",
+        remediation: "Restore role-specific hierarchy instead of applying one dense control treatment to the whole interface.",
         requires_routes: false,
         requires_house_style: false,
     },

@@ -101,6 +101,7 @@ pub struct ScanPolicy {
     pub semantic_class_signals: BTreeMap<String, BTreeSet<String>>,
     pub semantic_class_structures: BTreeMap<String, BTreeSet<String>>,
     pub semantic_card_classes: BTreeSet<String>,
+    pub semantic_class_traits: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Default for ScanPolicy {
@@ -136,6 +137,7 @@ impl Default for ScanPolicy {
             semantic_class_signals: BTreeMap::new(),
             semantic_class_structures: BTreeMap::new(),
             semantic_card_classes: BTreeSet::new(),
+            semantic_class_traits: BTreeMap::new(),
         }
     }
 }
@@ -285,6 +287,7 @@ struct ElementFact {
     shape: Option<String>,
     card_like: bool,
     stock_structures: Vec<String>,
+    convergence_signals: Vec<String>,
     snippet: String,
     eligible_display: bool,
     reachable_state: String,
@@ -345,6 +348,7 @@ struct CandidateVisitor<'a> {
     semantic_class_signals: &'a BTreeMap<String, BTreeSet<String>>,
     semantic_class_structures: &'a BTreeMap<String, BTreeSet<String>>,
     semantic_card_classes: &'a BTreeSet<String>,
+    semantic_class_traits: &'a BTreeMap<String, BTreeSet<String>>,
     render_edges: Vec<RenderEdge>,
     ownership_diagnostics: Vec<(String, String)>,
 }
@@ -600,6 +604,16 @@ impl<'a> CandidateVisitor<'a> {
             }
             stock_structures.sort();
             stock_structures.dedup();
+            let mut convergence_signals = collect_framework_default_signals(&class_tokens);
+            convergence_signals.extend(collect_control_surface_signals(&class_tokens));
+            for token in &class_tokens {
+                if let Some(configured) = self.semantic_class_traits.get(token) {
+                    convergence_signals.extend(configured.iter().cloned());
+                }
+            }
+            convergence_signals.sort();
+            convergence_signals.dedup();
+            convergence_signals.retain(|signal| !self.approved_signals.contains(signal));
             self.facts.push(ElementFact {
                 path: self.path.to_owned(),
                 owner: owner.name.to_owned(),
@@ -612,6 +626,7 @@ impl<'a> CandidateVisitor<'a> {
                 shape,
                 card_like,
                 stock_structures,
+                convergence_signals,
                 snippet: snippet.clone(),
                 eligible_display,
                 reachable_state: class_state.id.clone(),
@@ -1680,6 +1695,7 @@ pub fn scan_with_progress(
                 semantic_class_signals: &request.policy.semantic_class_signals,
                 semantic_class_structures: &request.policy.semantic_class_structures,
                 semantic_card_classes: &request.policy.semantic_card_classes,
+                semantic_class_traits: &request.policy.semantic_class_traits,
                 render_edges: Vec::new(),
                 ownership_diagnostics: Vec::new(),
             };
@@ -1770,7 +1786,7 @@ pub fn scan_with_progress(
         Some(facts.len()),
         85,
         coverage.unresolved.len(),
-        "evaluating the nine-rule V1 alpha pack",
+        "evaluating the eleven-rule V1 alpha pack",
     );
     let mut findings = activate_recurrence(candidates.clone(), &request.analysis_scope);
     findings.extend(activate_effect_stacking(
@@ -2456,10 +2472,164 @@ fn evaluate_v1_alpha_rules(
         evaluate_container_depth(owner_facts, analysis_scope, &mut findings);
         evaluate_rhythm(owner_facts, analysis_scope, policy, &mut findings);
         evaluate_template_convergence(owner_facts, analysis_scope, &mut findings);
+        evaluate_control_surface_homogenization(owner_facts, analysis_scope, &mut findings);
     }
     evaluate_composed_page_rules(facts, render_edges, analysis_scope, &mut findings);
+    evaluate_framework_default_convergence(facts, analysis_scope, &mut findings);
     evaluate_token_drift(facts, analysis_scope, policy, &mut findings);
     findings
+}
+
+fn evaluate_framework_default_convergence(
+    facts: &[ElementFact],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let mut facts_by_owner = BTreeMap::<(&str, &str), Vec<&ElementFact>>::new();
+    let mut signals_by_owner = BTreeMap::<(&str, &str), BTreeSet<&str>>::new();
+    for fact in facts {
+        let framework_signals = fact
+            .convergence_signals
+            .iter()
+            .filter(|signal| signal.starts_with("framework-"))
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        if framework_signals.is_empty() {
+            continue;
+        }
+        let owner = (fact.path.as_str(), fact.owner.as_str());
+        facts_by_owner.entry(owner).or_default().push(fact);
+        signals_by_owner
+            .entry(owner)
+            .or_default()
+            .extend(framework_signals);
+    }
+    let mut owners_by_signal = BTreeMap::<&str, BTreeSet<(&str, &str)>>::new();
+    for (owner, signals) in &signals_by_owner {
+        for signal in signals {
+            owners_by_signal.entry(signal).or_default().insert(*owner);
+        }
+    }
+    let recurring_signals = owners_by_signal
+        .iter()
+        .filter(|(_, owners)| owners.len() >= 3)
+        .map(|(signal, _)| *signal)
+        .collect::<BTreeSet<_>>();
+    if recurring_signals.len() < 4
+        || !recurring_signals.contains("framework-neutral-palette")
+        || !recurring_signals.contains("framework-rounded")
+    {
+        return;
+    }
+    let qualifying = signals_by_owner
+        .iter()
+        .filter_map(|(owner, signals)| {
+            let matching = signals.intersection(&recurring_signals).count();
+            (matching >= 4).then_some(*owner)
+        })
+        .collect::<Vec<_>>();
+    if qualifying.len() < 3 {
+        return;
+    }
+    let occurrence_key = format!(
+        "stock-framework-recipe:{}",
+        recurring_signals
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    for owner in &qualifying {
+        let owner_signals = &signals_by_owner[owner];
+        let signature = owner_signals
+            .intersection(&recurring_signals)
+            .map(|signal| (*signal).to_owned())
+            .collect::<Vec<_>>();
+        let score = (42
+            + signature.len().saturating_mul(4)
+            + qualifying.len().saturating_sub(3).saturating_mul(4))
+        .min(82) as u8;
+        let mut finding = make_finding(
+            "framework-default-convergence",
+            analysis_scope,
+            &occurrence_key,
+            &facts_by_owner[owner],
+            signature,
+            score,
+            12,
+            Vec::new(),
+        );
+        finding.recurrence_owner_count = qualifying.len();
+        findings.push(finding);
+    }
+}
+
+fn evaluate_control_surface_homogenization(
+    facts: &[&ElementFact],
+    analysis_scope: &str,
+    findings: &mut Vec<Finding>,
+) {
+    let mut occurrences = BTreeMap::<&str, Vec<&ElementFact>>::new();
+    for fact in facts {
+        for signal in &fact.convergence_signals {
+            if matches!(
+                signal.as_str(),
+                "compact-typography"
+                    | "outlined-chrome"
+                    | "neutral-surface"
+                    | "square-chrome"
+                    | "compact-spacing"
+            ) {
+                occurrences.entry(signal).or_default().push(fact);
+            }
+        }
+    }
+    let signature = occurrences
+        .iter()
+        .filter(|(_, matching)| matching.len() >= 4)
+        .map(|(signal, _)| (*signal).to_owned())
+        .collect::<Vec<_>>();
+    if signature.len() < 3
+        || !signature
+            .iter()
+            .any(|signal| signal == "compact-typography")
+        || !signature.iter().any(|signal| signal == "outlined-chrome")
+    {
+        return;
+    }
+    let evidence_facts = facts
+        .iter()
+        .copied()
+        .filter(|fact| {
+            signature
+                .iter()
+                .filter(|signal| fact.convergence_signals.contains(signal))
+                .count()
+                >= 3
+        })
+        .collect::<Vec<_>>();
+    let roles = evidence_facts
+        .iter()
+        .map(|fact| fact.role.as_str())
+        .collect::<BTreeSet<_>>();
+    if evidence_facts.len() < 8 || roles.len() < 3 {
+        return;
+    }
+    let score = (42
+        + signature.len().saturating_mul(5)
+        + roles.len().saturating_sub(3).saturating_mul(3)
+        + evidence_facts.len().saturating_sub(8).saturating_mul(2))
+    .min(82) as u8;
+    findings.push(make_finding(
+        "control-surface-homogenization",
+        analysis_scope,
+        "cross-role-compact-chrome",
+        &evidence_facts,
+        signature,
+        score,
+        12,
+        Vec::new(),
+    ));
 }
 
 fn evaluate_composed_page_rules(
@@ -3115,6 +3285,95 @@ fn collect_visual_values(tokens: &[String]) -> Vec<(String, String)> {
         }
     }
     values.into_iter().collect()
+}
+
+fn collect_framework_default_signals(tokens: &[String]) -> Vec<String> {
+    let mut signals = BTreeSet::new();
+    for token in tokens {
+        let core = token.rsplit(':').next().unwrap_or(token);
+        let is_color_utility = [
+            "bg-", "text-", "border-", "divide-", "ring-", "from-", "to-", "via-",
+        ]
+        .iter()
+        .any(|prefix| core.starts_with(prefix));
+        if is_color_utility
+            && (core.contains("slate-")
+                || core.contains("gray-")
+                || core.contains("zinc-")
+                || core.contains("neutral-")
+                || core.contains("stone-")
+                || matches!(core, "bg-white" | "text-black" | "border-white"))
+        {
+            signals.insert("framework-neutral-palette");
+        }
+        if is_color_utility && core.contains("sky-") {
+            signals.insert("framework-accent-sky");
+        }
+        if core == "rounded" || core.starts_with("rounded-") {
+            signals.insert("framework-rounded");
+        }
+        if matches!(
+            core,
+            "shadow-lg" | "shadow-xl" | "shadow-2xl" | "drop-shadow-lg" | "drop-shadow-xl"
+        ) {
+            signals.insert("framework-elevation");
+        }
+        if matches!(core, "text-xs" | "text-sm") {
+            signals.insert("framework-compact-type");
+        }
+        if token.starts_with("dark:")
+            && is_color_utility
+            && (core.contains("slate-")
+                || core.contains("gray-")
+                || core.contains("zinc-")
+                || core.contains("neutral-")
+                || core.contains("stone-"))
+        {
+            signals.insert("framework-dark-mirror");
+        }
+    }
+    signals.into_iter().map(str::to_owned).collect()
+}
+
+fn collect_control_surface_signals(tokens: &[String]) -> Vec<String> {
+    let mut signals = BTreeSet::new();
+    for token in tokens {
+        let core = token.rsplit(':').next().unwrap_or(token);
+        if matches!(core, "text-xs" | "text-sm") {
+            signals.insert("compact-typography");
+        }
+        if core == "border" || core.starts_with("border-") {
+            signals.insert("outlined-chrome");
+        }
+        if core == "bg-white"
+            || [
+                "bg-slate-",
+                "bg-gray-",
+                "bg-zinc-",
+                "bg-neutral-",
+                "bg-stone-",
+            ]
+            .iter()
+            .any(|prefix| core.starts_with(prefix))
+        {
+            signals.insert("neutral-surface");
+        }
+        if core == "rounded-none" {
+            signals.insert("square-chrome");
+        }
+        if compact_spacing_utility(core) {
+            signals.insert("compact-spacing");
+        }
+    }
+    signals.into_iter().map(str::to_owned).collect()
+}
+
+fn compact_spacing_utility(token: &str) -> bool {
+    ["p-", "px-", "py-", "pt-", "pr-", "pb-", "pl-"]
+        .iter()
+        .find_map(|prefix| token.strip_prefix(prefix))
+        .and_then(|value| value.parse::<f64>().ok())
+        .is_some_and(|value| value <= 4.0)
 }
 
 fn structural_role(tag: &str) -> &'static str {

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Rule-pack version | `1.0.0-beta.4` |
+| Rule-pack version | `1.0.0-beta.5` |
 | Status | Accepted for Shot 1 breadth implementation |
 | Calibration status | Pending; not release-approved |
 | Last updated | 2026-07-30 |
@@ -114,6 +114,30 @@ The existing [Repeated Decorative Shell contract](repeated-decorative-shell.md) 
 - Multiple archetypes: emit one independently explained Finding per matching archetype; component aggregation uses the strongest score plus capped breadth.
 - Coverage: route declarations and archetype evidence are reported separately. Page evidence may compose only through uniquely resolved local component names, to depth 8, at most 64 owners, and at most 512 facts. Ambiguous names do not compose. Unknown is a valid result, not a coverage failure.
 - Remediation: preserve the page's purpose while replacing interchangeable composition with product-specific hierarchy, interaction, or content shape.
+
+## Framework Default Convergence
+
+- Rule ID: `framework-default-convergence`; contract version: `0.1.0-alpha`.
+- Entity: one Analysis Scope, actionable at each participating component owner.
+- Activation: at least four stock framework signals recur across at least three owners; every participating owner has at least four of those signals. The recurring set must include a neutral framework palette and framework rounding.
+- Supported signals: neutral slate/gray/zinc/neutral/stone palette, sky accent, framework rounding, large preset elevation, compact preset typography, and mirrored neutral dark-mode treatment.
+- Exclusions: isolated use, fewer than three owners, palette use without a recurring component recipe, restrained custom CSS, and House Style-approved signals.
+- Score: 42 base + 4 per recurring signal on the owner + 4 per participating owner beyond three; cap 82.
+- Occurrence key: sorted recurring signal IDs.
+- Coverage: only statically resolved class states contribute. Dynamic styling remains explicit coverage loss.
+- Remediation: replace the repeated stock recipe with product-specific tokens, hierarchy, or component treatment; do not mechanically remove useful dark mode or accessibility behavior.
+
+## Control Surface Homogenization
+
+- Rule ID: `control-surface-homogenization`; contract version: `0.1.0-alpha`.
+- Entity: one component owner.
+- Activation: at least eight statically styled elements span at least three structural roles, with at least three control-surface traits each recurring four times. Compact typography and outlined chrome must be among the saturated traits, and every participating element has at least three saturated traits.
+- Supported traits: compact typography, outlined chrome, neutral surfaces, square chrome, and compact spacing. Traits come from Tailwind utilities or declarations on statically referenced simple plain-CSS classes, independent of class names.
+- Exclusions: one coherent control family, fewer than three roles, sparse chrome, unreferenced stylesheets, and House Style-approved traits.
+- Score: 42 base + 5 per saturated trait + 3 per role beyond three + 2 per styled element beyond eight; cap 82.
+- Occurrence key: `cross-role-compact-chrome`.
+- Coverage: ambiguous variables and conditional or compound signal-bearing selectors do not contribute and remain coverage diagnostics.
+- Remediation: restore role-specific hierarchy rather than applying one dense control treatment to controls, content, and structural regions alike.
 
 ## Built-in Page Archetypes
 

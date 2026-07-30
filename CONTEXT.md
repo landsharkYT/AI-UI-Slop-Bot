@@ -116,6 +116,14 @@ _Avoid_: Consistent spacing, grid use
 A page-level combination of several stock structures commonly assembled into interchangeable web applications, such as an eyebrow pill, centered promotional hero, CTA pair, framed product image, bento grid, or generic feature cards. No individual structure is sufficient evidence.
 _Avoid_: Landing page, hero section, template use
 
+**Framework Default Convergence**:
+A recurring stock framework recipe—neutral palette, familiar accent, preset rounding, elevation, compact type, or mirrored dark treatment—shared across distinct component owners. Palette or framework use alone is not sufficient evidence.
+_Avoid_: Tailwind usage, default color
+
+**Control Surface Homogenization**:
+Compact outlined surface chrome applied across controls, content, and structural regions until unlike roles share one dense visual treatment. A coherent toolbar or one control family is not sufficient evidence.
+_Avoid_: Dense UI, small text, square controls
+
 **Page Archetype**:
 A recognizable page purpose and structural family used to interpret composition in context, such as marketing, dashboard, checkout, settings, or documentation. The taxonomy is open through declarative combinations of versioned built-in structural signals; an unknown archetype still receives generic analysis rather than being excluded.
 _Avoid_: Template, route name

@@ -70,3 +70,11 @@ Date: 2026-07-30
 Rule pack `1.0.0-beta.4` fixes saturating pre-division arithmetic and exposes bounded severity, prevalence, recurrence, and density contributions. ReactPDFRedactor and the OSM utility remain at zero. WebsiteHelper moves from 28 low to 76 high, while EvacLogix moves from 35 low to 72 high. Incomplete scans are explicitly marked `coverage_limited`.
 
 The formula, golden boundaries, and exact contribution breakdowns are recorded in [SHOT-B-SCORE-CALIBRATION.md](SHOT-B-SCORE-CALIBRATION.md).
+
+## Shot C broader convergence follow-up
+
+Date: 2026-07-30
+
+Rule pack `1.0.0-beta.5` adds Framework Default Convergence and Control Surface Homogenization. ReactPDFRedactor and the OSM utility are no longer treated as clean negative controls: the former produces one cross-role dense-chrome Finding, while the latter produces six stock-framework-recipe Findings. A stricter per-element trait boundary protects the OSM utility, WebsiteHelper, and EvacLogix from incidental Control Surface Homogenization matches; WebsiteHelper and EvacLogix retain their prior positive evidence.
+
+Exact rule boundaries, counts, and the coverage qualification are recorded in [SHOT-C-BROADER-CONVERGENCE.md](SHOT-C-BROADER-CONVERGENCE.md).

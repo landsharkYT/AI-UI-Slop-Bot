@@ -54,7 +54,7 @@ The canonical domain definition of **AI UI Slop** is maintained in `CONTEXT.md`.
 
 1. **[MILESTONE-002]** **Discovery Prototype (not a release):** Prove the highest-risk technical and product hypotheses with the Repeated Decorative Shell rule on representative React/TSX, Tailwind, and static-inline-style fixtures. The prototype shall exercise local advisory scanning, source evidence, interactive progress reporting, and draft JSON and Markdown output. It is disposable, may support only the benchmark platform, and is not required to satisfy MVP or Full V1 compatibility, distribution, enforcement, corpus, or platform gates.
 2. **[MILESTONE-003]** **Validated MVP (first usable release):** Deliver a whole-repository local advisory scanner with Repeated Decorative Shell and Effect Stacking, the explicitly bounded MVP House Style configuration, canonical JSON, a generated Markdown Refactoring Brief, and a native Linux x86-64 binary. It shall prove that intended users find the results sufficiently accurate, actionable, and worth using. It does not include baseline enforcement, GitHub integration, broad Page Archetype coverage, the remaining seven-rule pack, or the Full V1 platform matrix.
-3. **[MILESTONE-004]** **Full V1:** Deliver the complete nine-rule pack, all built-in Page Archetypes plus safe generic fallback and taxonomy extension, all specified Tailwind v3/v4 and static inline-style analysis, monorepository Analysis Scopes, Reviewed Baselines, whole-repository regression enforcement, the GitHub Action, and every supported native target. Full V1 shall satisfy all requirements and acceptance criteria labeled V1 unless explicitly deferred.
+3. **[MILESTONE-004]** **Full V1:** Deliver the complete eleven-rule pack, all built-in Page Archetypes plus safe generic fallback and taxonomy extension, all specified Tailwind v3/v4 and static inline-style analysis, monorepository Analysis Scopes, Reviewed Baselines, whole-repository regression enforcement, the GitHub Action, and every supported native target. Full V1 shall satisfy all requirements and acceptance criteria labeled V1 unless explicitly deferred.
 
 Changed-file-only presentation, inline pull-request annotations, and a hosted GitHub App are post-V1 capabilities. Full V1 enforcement evaluates whole-repository results against a Reviewed Baseline and may return exit code 1 for policy-violating new or materially worsened Findings.
 
@@ -149,7 +149,7 @@ During discovery, the project owner is the initial Design Authority and customer
 
 **[RULE-002]** A descriptive rule name and intent do not satisfy this gate. Provisional weights and thresholds may remain calibration data, but the calculation shape, evidence contract, and behavior at boundaries shall be explicit and testable. Contract changes that can alter Findings, scores, or fingerprints shall follow rule-pack versioning and migration requirements.
 
-**[RULE-003]** The Discovery Prototype shall implement only Repeated Decorative Shell. The Validated MVP shall implement Repeated Decorative Shell and Effect Stacking. All nine Rule Contracts shall be approved before Full V1 rule implementation begins, and Full V1 shall ship all nine rules.
+**[RULE-003]** The Discovery Prototype shall implement only Repeated Decorative Shell. The Validated MVP shall implement Repeated Decorative Shell and Effect Stacking. All eleven Rule Contracts shall be approved before Full V1 rule implementation begins, and Full V1 shall ship all eleven rules.
 
 **[RULE-004]** V1 shall include these Slop Patterns:
 
@@ -162,6 +162,8 @@ During discovery, the project owner is the initial Design Authority and customer
 - **Generic Container Depth:** deep non-semantic wrapper hierarchies coupled with decorative layering; depth alone is insufficient.
 - **Design Token Drift:** repeated visual values diverging from the approved House Style scale; arbitrary syntax or a single exception is insufficient.
 - **Rhythm Homogenization:** excessively uniform spacing, sizing, and section or component rhythm that erases meaningful distinction.
+- **Framework Default Convergence:** a stock framework palette and component recipe recurring across otherwise distinct owners.
+- **Control Surface Homogenization:** compact outlined surface chrome recurring across controls, content, and structural roles until hierarchy is flattened.
 
 **[RULE-005]** Prop drilling, raw class-string length, package identity, arbitrary-value syntax by itself, and conflicting or redundant utilities shall not contribute to the AI Slop Score. They are architectural, syntactic, or lint concerns rather than reliable evidence of aesthetic convergence.
 
@@ -1067,7 +1069,7 @@ Threshold changes should report their effect on the corpus. Real-world repositor
 
 ### Discovery gates
 
-**[VALIDATION-013]** The Discovery Prototype may begin with the controlled evidence needed for its single Rule Contract. A rule shall not enter a releasable milestone until it passes the blind validation gates below. The Validated MVP applies the gates to Repeated Decorative Shell and Effect Stacking; Full V1 applies them independently to all nine rules.
+**[VALIDATION-013]** The Discovery Prototype may begin with the controlled evidence needed for its single Rule Contract. A rule shall not enter a releasable milestone until it passes the blind validation gates below. The Validated MVP applies the gates to Repeated Decorative Shell and Effect Stacking; Full V1 applies them independently to all eleven rules.
 
 **[VALIDATION-014]** Each Rule Contract shall define its independent Calibration Case unit. Each rule's untouched blind holdout shall contain at least 20 independently labeled in-scope positive cases and 20 acceptable-counterexample cases, spanning at least eight source repositories and four design families overall, with no repository supplying more than 25% of either polarity. Tuning cases are additional and shall not count toward these holdout minimums. A case may exercise more than one rule only when each expected rule outcome is labeled independently. Results shall report both case-level metrics and repository-clustered metrics.
 

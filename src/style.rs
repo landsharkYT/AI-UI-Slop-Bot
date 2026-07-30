@@ -34,6 +34,7 @@ pub(crate) struct StyleInspection {
     pub semantic_utilities: BTreeMap<String, BTreeSet<String>>,
     pub semantic_structures: BTreeMap<String, BTreeSet<String>>,
     pub semantic_cards: BTreeSet<String>,
+    pub semantic_traits: BTreeMap<String, BTreeSet<String>>,
 }
 
 pub(crate) fn inspect(request: StyleRequest<'_>) -> Result<StyleInspection, String> {
@@ -59,6 +60,7 @@ struct StyleAnalysis<'a> {
     semantic_utilities: BTreeMap<String, BTreeSet<String>>,
     semantic_structures: BTreeMap<String, BTreeSet<String>>,
     semantic_cards: BTreeSet<String>,
+    semantic_traits: BTreeMap<String, BTreeSet<String>>,
     plain_css_sources: Vec<(String, String)>,
 }
 
@@ -80,6 +82,7 @@ impl<'a> StyleAnalysis<'a> {
             semantic_utilities: BTreeMap::new(),
             semantic_structures: BTreeMap::new(),
             semantic_cards: BTreeSet::new(),
+            semantic_traits: BTreeMap::new(),
             plain_css_sources: Vec::new(),
         }
     }
@@ -404,6 +407,7 @@ impl<'a> StyleAnalysis<'a> {
                 &mut self.semantic_utilities,
                 &mut self.semantic_structures,
                 &mut self.semantic_cards,
+                &mut self.semantic_traits,
             );
             if outcome.unresolved_selectors {
                 self.unresolved.insert(format!(
@@ -421,6 +425,7 @@ impl<'a> StyleAnalysis<'a> {
             .keys()
             .chain(self.semantic_structures.keys())
             .chain(self.semantic_cards.iter())
+            .chain(self.semantic_traits.keys())
             .collect::<BTreeSet<_>>()
             .len() as u64;
         StyleInspection {
@@ -438,6 +443,7 @@ impl<'a> StyleAnalysis<'a> {
             semantic_utilities: self.semantic_utilities,
             semantic_structures: self.semantic_structures,
             semantic_cards: self.semantic_cards,
+            semantic_traits: self.semantic_traits,
         }
     }
 }
@@ -567,6 +573,7 @@ fn collect_plain_css_semantic_classes(
     classes: &mut BTreeMap<String, BTreeSet<String>>,
     structures: &mut BTreeMap<String, BTreeSet<String>>,
     cards: &mut BTreeSet<String>,
+    traits: &mut BTreeMap<String, BTreeSet<String>>,
 ) -> PlainCssOutcome {
     let source = strip_css_comments(source);
     let mut index = 0;
@@ -586,10 +593,13 @@ fn collect_plain_css_semantic_classes(
         let body = &source[open + 1..close];
         let (signals, unresolved_variables) =
             classify_plain_css_declarations(body, custom_properties);
-        let (semantic_structures, card_like, structural_unresolved) =
+        let (semantic_structures, card_like, semantic_traits, structural_unresolved) =
             classify_plain_css_structure(body, custom_properties);
         outcome.unresolved_variables |= unresolved_variables || structural_unresolved;
-        let has_semantics = !signals.is_empty() || !semantic_structures.is_empty() || card_like;
+        let has_semantics = !signals.is_empty()
+            || !semantic_structures.is_empty()
+            || !semantic_traits.is_empty()
+            || card_like;
         if header.starts_with('@') {
             let supported_tailwind_block =
                 header.starts_with("@theme") || header.starts_with("@utility");
@@ -615,6 +625,12 @@ fn collect_plain_css_semantic_classes(
                         if card_like {
                             cards.insert(name.to_owned());
                         }
+                        if !semantic_traits.is_empty() {
+                            traits
+                                .entry(name.to_owned())
+                                .or_default()
+                                .extend(semantic_traits.clone());
+                        }
                     }
                 } else if selector.contains('.') {
                     outcome.unresolved_selectors = true;
@@ -629,7 +645,7 @@ fn collect_plain_css_semantic_classes(
 fn classify_plain_css_structure(
     body: &str,
     custom_properties: &BTreeMap<String, BTreeSet<String>>,
-) -> (BTreeSet<String>, bool, bool) {
+) -> (BTreeSet<String>, bool, BTreeSet<String>, bool) {
     let mut declarations = BTreeMap::new();
     let mut unresolved = false;
     for declaration in body.split(';') {
@@ -652,6 +668,7 @@ fn classify_plain_css_structure(
     }
 
     let mut structures = BTreeSet::new();
+    let mut traits = BTreeSet::new();
     let font_size = declarations
         .get("font-size")
         .and_then(|value| css_length_px(value));
@@ -684,7 +701,12 @@ fn classify_plain_css_structure(
         .get("border-radius")
         .is_some_and(|value| css_lengths(value).any(|pixels| pixels >= 6.0));
     let border = declarations.iter().any(|(property, value)| {
-        property.starts_with("border") && !value.contains("none") && value != "0"
+        (property == "border"
+            || (property.starts_with("border-")
+                && property != "border-radius"
+                && !property.starts_with("border-radius-")))
+            && !value.contains("none")
+            && value != "0"
     });
     let surface = declarations
         .get("background")
@@ -695,9 +717,72 @@ fn classify_plain_css_structure(
                 "none" | "transparent" | "inherit" | "initial" | "unset"
             )
         });
+    let neutral_surface = declarations
+        .get("background")
+        .or_else(|| declarations.get("background-color"))
+        .is_some_and(|value| is_neutral_css_color(value));
     let card_like = padding && surface && (border || radius);
 
-    (structures, card_like, unresolved)
+    if font_size.is_some_and(|pixels| pixels <= 13.0) {
+        traits.insert("compact-typography".to_owned());
+    }
+    if border {
+        traits.insert("outlined-chrome".to_owned());
+    }
+    if neutral_surface {
+        traits.insert("neutral-surface".to_owned());
+    }
+    if declarations.get("border-radius").is_some_and(|value| {
+        value == "0"
+            || css_lengths(value)
+                .next()
+                .is_some_and(|pixels| pixels == 0.0)
+    }) {
+        traits.insert("square-chrome".to_owned());
+    }
+    if declarations.get("padding").is_some_and(|value| {
+        let lengths = css_lengths(value).collect::<Vec<_>>();
+        !lengths.is_empty() && lengths.iter().all(|pixels| *pixels <= 16.0)
+    }) {
+        traits.insert("compact-spacing".to_owned());
+    }
+
+    (structures, card_like, traits, unresolved)
+}
+
+fn is_neutral_css_color(value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    if matches!(value.as_str(), "white" | "black")
+        || ["slate", "gray", "grey", "zinc", "neutral", "stone"]
+            .iter()
+            .any(|name| value.contains(name))
+    {
+        return true;
+    }
+    let Some(hex) = value
+        .split_ascii_whitespace()
+        .find_map(|part| part.strip_prefix('#'))
+    else {
+        return false;
+    };
+    let channels = match hex.len() {
+        3 | 4 => hex
+            .chars()
+            .take(3)
+            .map(|digit| u8::from_str_radix(&digit.to_string().repeat(2), 16))
+            .collect::<Result<Vec<_>, _>>()
+            .ok(),
+        6 | 8 => (0..3)
+            .map(|index| u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16))
+            .collect::<Result<Vec<_>, _>>()
+            .ok(),
+        _ => None,
+    };
+    channels.is_some_and(|channels| {
+        let minimum = channels.iter().min().copied().unwrap_or(0);
+        let maximum = channels.iter().max().copied().unwrap_or(255);
+        maximum.saturating_sub(minimum) <= 20
+    })
 }
 
 fn css_lengths(value: &str) -> impl Iterator<Item = f64> + '_ {
@@ -948,7 +1033,9 @@ fn classify_spacing(value: &str) -> Option<&'static str> {
 
 fn css_length_px(value: &str) -> Option<f64> {
     let value = value.trim();
-    if let Some(pixels) = value.strip_suffix("px") {
+    if value == "0" {
+        Some(0.0)
+    } else if let Some(pixels) = value.strip_suffix("px") {
         pixels.trim().parse().ok()
     } else if let Some(rem) = value.strip_suffix("rem") {
         rem.trim().parse::<f64>().ok().map(|value| value * 16.0)

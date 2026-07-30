@@ -23,6 +23,8 @@ fn v1_alpha_exposes_the_complete_rule_and_page_archetype_catalogs() {
             "generic-container-depth",
             "design-token-drift",
             "rhythm-homogenization",
+            "framework-default-convergence",
+            "control-surface-homogenization",
         ]
     );
     assert!(rule_catalog().iter().all(|rule| {
@@ -115,7 +117,7 @@ fn repository_analysis_loads_jsonc_policy_and_preserves_independent_scopes() {
 
     assert_eq!(report.artifact_type, "ai-ui-slop.canonical-report");
     assert_eq!(report.schema_version, "7");
-    assert_eq!(report.rule_pack_version, "1.0.0-beta.4");
+    assert_eq!(report.rule_pack_version, "1.0.0-beta.5");
     assert_eq!(report.summary.scope_count, 2);
     assert_eq!(
         report
@@ -143,7 +145,7 @@ fn repository_analysis_loads_jsonc_policy_and_preserves_independent_scopes() {
 }
 
 #[test]
-fn one_repository_run_exercises_all_nine_v1_alpha_rule_paths() {
+fn one_repository_run_exercises_all_eleven_v1_alpha_rule_paths() {
     let temporary = tempfile::tempdir().expect("temporary repository");
     let root = temporary.path();
     fs::write(
@@ -160,8 +162,14 @@ fn one_repository_run_exercises_all_nine_v1_alpha_rule_paths() {
     )
     .expect("configuration");
     fs::write(
+        root.join("styles.css"),
+        ".dense-chrome { padding: 6px 8px; border: 1px solid #aaa; border-radius: 0; background: #f7f8f9; font-size: 12px; }",
+    )
+    .expect("style source");
+    fs::write(
         root.join("MarketingPage.tsx"),
         r#"
+import "./styles.css";
 export function MarketingPage() {
   return (
     <main className="text-center py-8">
@@ -177,17 +185,27 @@ export function MarketingPage() {
         <article className="p-8 rounded-3xl shadow-xl">Five</article>
       </section>
       <div><div><div className="shadow-xl"><div><div><div className="ring-1">Deep</div></div></div></div></div></div>
+      <header className="dense-chrome">Header</header>
+      <nav className="dense-chrome">Nav</nav>
+      <button className="dense-chrome">Open</button>
+      <button className="dense-chrome">Save</button>
+      <section className="dense-chrome">Canvas</section>
+      <article className="dense-chrome">Result</article>
+      <aside className="dense-chrome">Inspector</aside>
+      <form className="dense-chrome">Search</form>
+      <label className="dense-chrome">Query</label>
+      <footer className="dense-chrome">Ready</footer>
     </main>
   );
 }
 export function ShellOne() {
-  return <section className="p-8 rounded-3xl bg-gradient-to-r from-red-500 to-blue-500 shadow-xl backdrop-blur-md ring-1">One</section>;
+  return <section className="p-8 rounded-3xl bg-gradient-to-r from-slate-50 via-sky-500 to-slate-900 text-sm shadow-xl backdrop-blur-md ring-1 dark:bg-slate-900">One</section>;
 }
 export function ShellTwo() {
-  return <article className="p-8 rounded-3xl bg-gradient-to-r from-red-500 to-blue-500 shadow-xl backdrop-blur-md ring-1">Two</article>;
+  return <article className="p-8 rounded-3xl bg-gradient-to-r from-slate-50 via-sky-500 to-slate-900 text-sm shadow-xl backdrop-blur-md ring-1 dark:bg-slate-900">Two</article>;
 }
 export function ShellThree() {
-  return <div className="p-8 rounded-3xl bg-gradient-to-r from-red-500 to-blue-500 shadow-xl backdrop-blur-md ring-1">Three</div>;
+  return <div className="p-8 rounded-3xl bg-gradient-to-r from-slate-50 via-sky-500 to-slate-900 text-sm shadow-xl backdrop-blur-md ring-1 dark:bg-slate-900">Three</div>;
 }
 "#,
     )
@@ -205,10 +223,12 @@ export function ShellThree() {
         rule_ids,
         [
             "cardification",
+            "control-surface-homogenization",
             "decoration-saturation",
             "design-token-drift",
             "effect-stacking",
             "generic-container-depth",
+            "framework-default-convergence",
             "repeated-decorative-shell",
             "rhythm-homogenization",
             "shape-homogenization",

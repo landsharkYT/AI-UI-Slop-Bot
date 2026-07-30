@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub const REPORT_SCHEMA_VERSION: &str = "7";
-pub const RULE_PACK_VERSION: &str = "1.0.0-beta.4";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.5";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
@@ -502,6 +502,7 @@ fn analyze_scope(
         semantic_class_signals: style_inspection.semantic_utilities,
         semantic_class_structures: style_inspection.semantic_structures,
         semantic_card_classes: style_inspection.semantic_cards,
+        semantic_class_traits: style_inspection.semantic_traits,
     };
     request.cancellation = cancellation.clone();
     let scan_report = scan_with_progress(request, progress).map_err(|error| {
