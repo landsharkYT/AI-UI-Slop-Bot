@@ -28,3 +28,14 @@ ctrlc = "3.5.2"
 
 [dev-dependencies]
 tempfile = "3.20"
+
+# Oxc makes debug test binaries large, and this repository has many integration
+# test targets. Keep source line information for diagnostics without retaining
+# full debug symbols or per-crate incremental caches after every agent pass.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = false

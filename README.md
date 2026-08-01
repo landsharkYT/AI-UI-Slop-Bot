@@ -172,6 +172,19 @@ cargo test
 
 The public-seam tests cover discovery, graph and route adapters, static style resolution, rule boundaries, coverage and resource ceilings, hostile inputs, baselines, deterministic parallel execution, CLI lifecycles, progress, and report artifacts.
 
+### Build-disk maintenance
+
+Cargo writes reproducible build output to `target/`, which is ignored by Git. This project has many integration-test binaries linked against Oxc, so repeated builds under different source and compiler states can leave several generations of large artifacts there. The development and test profiles retain line-table diagnostics but disable full debug symbols and incremental caches to keep routine builds bounded.
+
+Check and reclaim the generated space with:
+
+```sh
+du -sh target 2>/dev/null || true
+cargo clean
+```
+
+`cargo clean` removes only Cargo-generated artifacts; the next build recreates what it needs. It does not remove source, configuration, reports outside `target/`, or Git history.
+
 The latest real-repository calibration reduced EventCardSite from 31 mixed findings to six coherent Control Surface Homogenization findings while removing false framework, dialog-decoration, and stock-template clusters. See [EventCardSite calibration evidence](docs/evidence/EVENTCARD-CALIBRATION.md).
 
 Design rationale and counterexample provenance from *Refactoring UI* are documented in the [reference traceability matrix](docs/references/refactoring-ui-traceability.md). The book informs explanations and counterexamples; it is not treated as a machine-enforceable taste specification.
