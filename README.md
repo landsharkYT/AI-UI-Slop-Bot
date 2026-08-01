@@ -2,7 +2,7 @@
 
 AI UI Slop Bot is an evidence-first Rust analyzer for repeated, context-insensitive frontend aesthetics: interchangeable landing-page formulas, excessive card shells, stock framework recipes, effect stacking, and the “everything has the same compact border” treatment.
 
-The current build is a **V1 implementation candidate** (`0.11.0`, rule pack `1.0.0-beta.6`). It is useful as a design-review assistant, not an objective taste oracle. Customer calibration, hosted-platform qualification, and authenticated release validation are still open.
+The current build is a **V1 implementation candidate** (`0.12.0`, rule pack `1.0.0-beta.7`). It is useful as a design-review assistant, not an objective taste oracle. Customer calibration, hosted-platform qualification, and authenticated release validation are still open.
 
 ## Build
 

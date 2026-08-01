@@ -85,6 +85,7 @@ pub struct ScanPolicy {
     pub rule_dispositions: BTreeMap<String, String>,
     pub rule_minimum_scores: BTreeMap<String, u8>,
     pub rule_minimum_confidences: BTreeMap<String, String>,
+    pub route_page_owners: BTreeSet<(String, String)>,
     pub class_functions: BTreeSet<String>,
     pub component_wrappers: BTreeSet<String>,
     pub jsx_extensions: BTreeSet<String>,
@@ -115,6 +116,7 @@ impl Default for ScanPolicy {
             rule_dispositions: BTreeMap::new(),
             rule_minimum_scores: BTreeMap::new(),
             rule_minimum_confidences: BTreeMap::new(),
+            route_page_owners: BTreeSet::new(),
             class_functions: ["clsx", "classnames", "classNames", "cn", "twMerge"]
                 .into_iter()
                 .map(str::to_owned)
@@ -2471,10 +2473,10 @@ fn evaluate_v1_alpha_rules(
         evaluate_cardification(owner_facts, analysis_scope, &mut findings);
         evaluate_container_depth(owner_facts, analysis_scope, &mut findings);
         evaluate_rhythm(owner_facts, analysis_scope, policy, &mut findings);
-        evaluate_template_convergence(owner_facts, analysis_scope, &mut findings);
+        evaluate_template_convergence(owner_facts, analysis_scope, policy, &mut findings);
         evaluate_control_surface_homogenization(owner_facts, analysis_scope, &mut findings);
     }
-    evaluate_composed_page_rules(facts, render_edges, analysis_scope, &mut findings);
+    evaluate_composed_page_rules(facts, render_edges, analysis_scope, policy, &mut findings);
     evaluate_framework_default_convergence(facts, analysis_scope, &mut findings);
     evaluate_token_drift(facts, analysis_scope, policy, &mut findings);
     findings
@@ -2639,6 +2641,7 @@ fn evaluate_composed_page_rules(
     facts: &[ElementFact],
     render_edges: &[RenderEdge],
     analysis_scope: &str,
+    policy: &ScanPolicy,
     findings: &mut Vec<Finding>,
 ) {
     const MAX_COMPOSITION_DEPTH: usize = 8;
@@ -2665,7 +2668,7 @@ fn evaluate_composed_page_rules(
 
     let page_keys = by_owner
         .keys()
-        .filter(|(path, owner)| is_page_owner(path, owner))
+        .filter(|(path, owner)| is_page_owner(path, owner, policy))
         .cloned()
         .collect::<Vec<_>>();
     for page_key in page_keys {
@@ -2727,7 +2730,7 @@ fn evaluate_composed_page_rules(
         let references = composed.iter().collect::<Vec<_>>();
         let mut composed_findings = Vec::new();
         evaluate_cardification(&references, analysis_scope, &mut composed_findings);
-        evaluate_template_convergence(&references, analysis_scope, &mut composed_findings);
+        evaluate_template_convergence(&references, analysis_scope, policy, &mut composed_findings);
         for finding in composed_findings {
             let duplicate = findings.iter().any(|existing| {
                 existing.rule_id == finding.rule_id
@@ -2742,7 +2745,13 @@ fn evaluate_composed_page_rules(
     }
 }
 
-fn is_page_owner(_path: &str, owner: &str) -> bool {
+fn is_page_owner(path: &str, owner: &str, policy: &ScanPolicy) -> bool {
+    if policy
+        .route_page_owners
+        .contains(&(path.to_owned(), owner.to_owned()))
+    {
+        return true;
+    }
     let owner = owner.to_ascii_lowercase();
     owner == "app"
         || owner == "page"
@@ -2934,12 +2943,13 @@ fn evaluate_rhythm(
 fn evaluate_template_convergence(
     facts: &[&ElementFact],
     analysis_scope: &str,
+    policy: &ScanPolicy,
     findings: &mut Vec<Finding>,
 ) {
     let Some(first) = facts.first() else {
         return;
     };
-    if !is_page_owner(&first.path, &first.owner) {
+    if !is_page_owner(&first.path, &first.owner, policy) {
         return;
     }
     let mut structures = BTreeSet::new();
@@ -3425,9 +3435,10 @@ fn collect_stock_structures(
     {
         structures.insert("framed-product-media");
     }
-    if tokens
-        .iter()
-        .any(|token| token.starts_with("col-span-") || token.starts_with("row-span-"))
+    if matches!(tag, "article" | "section" | "div" | "aside")
+        && tokens
+            .iter()
+            .any(|token| token.starts_with("col-span-") || token.starts_with("row-span-"))
     {
         structures.insert("bento-grid");
     }

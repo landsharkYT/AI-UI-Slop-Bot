@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub const REPORT_SCHEMA_VERSION: &str = "7";
-pub const RULE_PACK_VERSION: &str = "1.0.0-beta.6";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.7";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
@@ -429,6 +429,15 @@ fn analyze_scope(
                 .to_owned(),
         });
     }
+    let routes = classify_routes(
+        &effective.absolute_root,
+        ignore_policy_root,
+        &effective.custom_archetypes,
+        &effective.route_overrides,
+    )?;
+    if cancellation.is_cancelled() {
+        return Err(RepositoryError::cancelled());
+    }
     let mut request = ScanRequest::new(&effective.absolute_root);
     request.analysis_scope.clone_from(&effective.id);
     request.policy = ScanPolicy {
@@ -485,6 +494,10 @@ fn analyze_scope(
             .rules
             .iter()
             .map(|(rule_id, policy)| (rule_id.clone(), policy.minimum_confidence.clone()))
+            .collect(),
+        route_page_owners: routes
+            .iter()
+            .map(|route| (route.path.clone(), route.owner.clone()))
             .collect(),
         class_functions: effective.class_functions.iter().cloned().collect(),
         component_wrappers: effective.component_wrappers.iter().cloned().collect(),
@@ -544,15 +557,6 @@ fn analyze_scope(
                 ),
             });
         }
-    }
-    let routes = classify_routes(
-        &effective.absolute_root,
-        ignore_policy_root,
-        &effective.custom_archetypes,
-        &effective.route_overrides,
-    )?;
-    if cancellation.is_cancelled() {
-        return Err(RepositoryError::cancelled());
     }
     let graph_routes = routes
         .iter()
@@ -1143,7 +1147,7 @@ fn classify_routes(
             .to_string_lossy()
             .replace('\\', "/");
         let source = fs::read_to_string(&path).unwrap_or_default();
-        let owner = exported_default_function(&source).unwrap_or_else(|| {
+        let owner = exported_default_owner(&source).unwrap_or_else(|| {
             path.file_stem()
                 .and_then(|name| name.to_str())
                 .unwrap_or("UnknownPage")
@@ -1377,6 +1381,7 @@ fn discover_root_spa_mounts(
                 discover_root_spa_mounts(root, &path, ignore_rules, owners)?;
             }
         } else if file_type.is_file()
+            && !is_test_module(&relative)
             && matches!(
                 path.extension().and_then(|extension| extension.to_str()),
                 Some("jsx" | "tsx")
@@ -1437,26 +1442,55 @@ fn root_spa_mount_owner(source: &str) -> Option<String> {
     None
 }
 
-fn exported_default_function(source: &str) -> Option<String> {
-    let marker = "export default function ";
+fn exported_default_owner(source: &str) -> Option<String> {
+    let marker = "export default ";
     let tail = &source[source.find(marker)? + marker.len()..];
+    let (tail, declaration) = if let Some(tail) = tail.strip_prefix("function ") {
+        (tail, true)
+    } else if let Some(tail) = tail.strip_prefix("async function ") {
+        (tail, true)
+    } else {
+        (tail, false)
+    };
     let length = tail
         .bytes()
         .take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$'))
         .count();
-    (length > 0).then(|| tail[..length].to_owned())
+    if length == 0 {
+        return None;
+    }
+    let owner = &tail[..length];
+    if !owner.starts_with(char::is_uppercase) {
+        return None;
+    }
+    let remainder = tail[length..].trim_start();
+    (declaration || remainder.starts_with(';')).then(|| owner.to_owned())
 }
 
 fn route_adapter_source(relative_lowercase: &str) -> &'static str {
-    if relative_lowercase.starts_with("app/")
-        && (relative_lowercase.ends_with("/page.tsx") || relative_lowercase.ends_with("/page.jsx"))
+    let framework_relative = relative_lowercase
+        .strip_prefix("src/")
+        .unwrap_or(relative_lowercase);
+    if framework_relative.starts_with("app/")
+        && (framework_relative.ends_with("/page.tsx") || framework_relative.ends_with("/page.jsx"))
     {
         "next-app-router"
-    } else if relative_lowercase.starts_with("pages/") {
+    } else if framework_relative.starts_with("pages/") {
         "next-pages-router"
     } else {
         "filesystem-convention"
     }
+}
+
+fn is_test_module(relative: &str) -> bool {
+    let relative = relative.to_ascii_lowercase();
+    let file_name = relative.rsplit('/').next().unwrap_or(&relative);
+    file_name.contains(".test.")
+        || file_name.contains(".spec.")
+        || file_name.contains(".stories.")
+        || relative
+            .split('/')
+            .any(|segment| matches!(segment, "test" | "tests" | "__tests__" | "e2e"))
 }
 
 fn discover_react_router_routes(
@@ -1505,6 +1539,7 @@ fn discover_react_router_routes(
                 discover_react_router_routes(root, &path, ignore_rules, routes)?;
             }
         } else if file_type.is_file()
+            && !is_test_module(&relative)
             && matches!(
                 path.extension().and_then(|extension| extension.to_str()),
                 Some("jsx" | "tsx")
@@ -1620,6 +1655,7 @@ fn discover_routes(
                 discover_routes(root, &path, ignore_rules, files)?;
             }
         } else if file_type.is_file()
+            && !is_test_module(&relative)
             && matches!(
                 path.extension().and_then(|extension| extension.to_str()),
                 Some("jsx" | "tsx")

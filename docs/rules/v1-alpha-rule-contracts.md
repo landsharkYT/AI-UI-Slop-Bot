@@ -2,10 +2,10 @@
 
 | Field | Value |
 | --- | --- |
-| Rule-pack version | `1.0.0-beta.6` |
+| Rule-pack version | `1.0.0-beta.7` |
 | Status | Accepted for Shot 1 breadth implementation |
 | Calibration status | Pending; not release-approved |
-| Last updated | 2026-07-30 |
+| Last updated | 2026-07-31 |
 
 These contracts authorize conservative V1-shaped matchers for Shot 1. They make the calculation and evidence shapes executable across the full rule pack without claiming customer validation. A matcher must emit explicit coverage loss instead of guessing when its required evidence is unavailable. Threshold changes require a rule-pack version change and fixture updates.
 
@@ -114,11 +114,11 @@ Design rationale and counterexample provenance are recorded in the [Refactoring 
 ## Template Convergence
 
 - Reference rationale: starting from product purpose and choosing a deliberate personality protects conventional structures from becoming an interchangeable formula.
-- Rule ID: `template-convergence`; contract version: `0.2.0-alpha`.
-- Entity: one detected route/page owner evaluated independently for every applicable Page Archetype. Page owners are `App`, `Page`, and owners ending in `Page`, `Screen`, or `View`; a page-like filename alone does not promote helper components.
+- Rule ID: `template-convergence`; contract version: `0.3.0-alpha`.
+- Entity: one detected route/page owner evaluated independently for every applicable Page Archetype. Page owners include exact owners established by route discovery plus `App`, `Page`, and owners ending in `Page`, `Screen`, or `View`; a page-like filename alone does not promote helper components.
 - Versioned route/archetype structural signals remain `eyebrow-pill`, `centered-hero`, `gradient-heading`, `paired-cta`, `framed-product-media`, `bento-grid`, and `three-card-features`. Rule evaluation also accepts the plain-CSS semantic equivalents `eyebrow-label` and `repeated-panel-grid`; these two internal evidence IDs are not configurable custom-archetype signals.
 - Activation: at least three distinct structures participating in one page owner; four signals score high and five or more may score dominant.
-- Exclusions: one or two stock structures, structures split across unrelated owners, one grid counted under multiple aliases, functional command grids, ordinary equal-column layouts without explicit bento spans, `unknown` classification by itself, and explicitly approved distinctive structures. A three-card feature structure requires exactly three direct elements in an explicit three-column grid. A paired CTA requires exactly two direct elements in a navigation region, or in a flex container with explicit gap.
+- Exclusions: one or two stock structures, structures split across unrelated owners, one grid counted under multiple aliases, functional command grids, action controls carrying layout spans, ordinary equal-column layouts without explicit bento spans, `unknown` classification by itself, and explicitly approved distinctive structures. A three-card feature structure requires exactly three direct elements in an explicit three-column grid. A paired CTA requires exactly two direct elements in a navigation region, or in a flex container with explicit gap.
 - Score: 15 per structure + a 10-point three-structure interaction, 18 points for four, or 25 for five or more; cap 100.
 - Occurrence key: Page Archetype ID plus sorted structural signal IDs.
 - Multiple archetypes: emit one independently explained Finding per matching archetype; component aggregation uses the strongest score plus capped breadth.

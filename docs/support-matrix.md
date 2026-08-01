@@ -15,12 +15,12 @@ Status: Shot 7 V1 implementation complete; external validation pending.
 | Configuration | `ai-ui-slop.config.jsonc`, schema 1 |
 | Canonical report | JSON schema 7 and Markdown projection, including canonical resource usage, score contributions, selected component state, and score-interpretation qualification |
 | Baseline | JSON schema 2 with semantic migration preview |
-| Rule pack | `1.0.0-beta.6`, eleven executable rule paths and bounded component/repository aggregation |
+| Rule pack | `1.0.0-beta.7`, eleven executable rule paths and bounded component/repository aggregation |
 | Page Archetypes | Fourteen built-in IDs, `unknown`, and declarative custom definitions |
 | Static class composition | Literals, repository-local constants, static templates, finite conditionals, standard combinators, configured class helpers, CVA defaults/static selections/scalar-or-array compound variants, and bounded variant-condition families |
 | Repository discovery | Checkout/Trusted Policy `.gitignore`, built-in exclusions, internal symlink deduplication, external-symlink diagnostics, UTF-8 BOM and CRLF; `init` uses React plus browser-entrypoint evidence and bounded nested discovery |
 | Repository graph | Oxc-contextual JSX render edges, dotted-basename relative imports, inherited tsconfig path aliases, workspace package exports, wildcard/named barrels and cycles, literal dynamic/lazy imports, generated public `_framework` exclusion, routes, archetypes, approved primitives, file-level Finding impact sites, and bounded page composition through uniquely named local owners |
-| Route adapters | Next App Router, Next Pages Router, static React Router declarations, conventional React root mounts, configured overrides |
+| Route adapters | Next App Router and Next Pages Router at repository root or beneath `src/`, static React Router declarations, conventional React root mounts, configured overrides; test modules never become application routes |
 | Resource control | Source/file/graph/AST/reachable-state/diagnostic/output ceilings, accounted parser memory, cooperative wall time, and cancellation |
 | GitHub integration | Composite Action supporting protected Trusted Policy, cooperative wall time, Linux outer-memory control, and a separately installed integrity-verified native binary |
 | Release automation | Five native target jobs, digest manifest, SPDX SBOM, GitHub attestation |
