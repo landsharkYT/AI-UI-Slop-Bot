@@ -179,7 +179,7 @@ scripts/fuzz-smoke.py --iterations 128
 
 The public-seam tests cover discovery, graph and route adapters, static style resolution, rule boundaries, coverage and resource ceilings, hostile inputs, baselines, deterministic parallel execution, CLI lifecycles, progress, and report artifacts.
 
-Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, and evidence order are in [qualification/README.md](qualification/README.md). A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
+Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, and evidence order are in [qualification/README.md](qualification/README.md). Qualification Shot 2 completed the local TEST-004 mutation gate at 80.6311%; see [the Shot 2 record](docs/evidence/QUALIFICATION-SHOT-2.md). A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
 
 ### Build-disk maintenance
 
