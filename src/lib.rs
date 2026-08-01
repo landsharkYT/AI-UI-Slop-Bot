@@ -770,7 +770,7 @@ fn is_supported_runtime_factory(call: &CallExpression<'_>) -> bool {
         Expression::Identifier(identifier)
             if matches!(identifier.name.as_str(), "createElement" | "_jsx" | "_jsxs" | "jsx" | "jsxs")
     ) || call.callee.as_member_expression().is_some_and(|member| {
-        member.static_property_name().as_deref() == Some("createElement")
+        member.static_property_name() == Some("createElement")
             && matches!(
                 member.object(),
                 Expression::Identifier(identifier) if identifier.name == "React"

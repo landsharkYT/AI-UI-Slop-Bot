@@ -32,6 +32,13 @@ fn v1_alpha_exposes_the_complete_rule_and_page_archetype_catalogs() {
             && !rule.summary.is_empty()
             && !rule.remediation.is_empty()
     }));
+    assert_eq!(
+        rule_catalog()
+            .iter()
+            .find(|rule| rule.id == "cardification")
+            .map(|rule| rule.contract_version),
+        Some("0.2.0-alpha")
+    );
 
     let archetypes = page_archetype_catalog()
         .iter()

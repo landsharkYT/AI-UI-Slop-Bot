@@ -58,7 +58,7 @@ const RULES: [RuleDefinition; 11] = [
     },
     RuleDefinition {
         id: "cardification",
-        contract_version: "0.1.0-alpha",
+        contract_version: "0.2.0-alpha",
         summary: "Nested or repetitive floating containers replace meaningful content grouping.",
         remediation: "Recover semantic grouping before simplifying card chrome.",
         requires_routes: false,

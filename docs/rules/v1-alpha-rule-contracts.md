@@ -64,7 +64,7 @@ Design rationale and counterexample provenance are recorded in the [Refactoring 
 ## Cardification
 
 - Reference rationale: spacing, contrast, and grouping can communicate structure without surrounding every region with equivalent chrome.
-- Rule ID: `cardification`; contract version: `0.1.0-alpha`.
+- Rule ID: `cardification`; contract version: `0.2.0-alpha`.
 - Entity: one component owner.
 - Activation: either at least five card-like decorated display containers, or at least three with a nested card-like depth of two or more.
 - A card-like container has padding plus at least one of outline, shadow, background treatment, or extreme radius. Restrained plain-CSS surfaces require padding and a non-transparent background plus a border or radius; class names are not positive evidence.
