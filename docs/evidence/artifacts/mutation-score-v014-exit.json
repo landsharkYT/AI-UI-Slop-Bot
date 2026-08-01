@@ -1,0 +1,13 @@
+{
+  "cargoMutantsVersion": "27.0.0",
+  "caught": 762,
+  "minimumScorePercent": 80.0,
+  "missed": 179,
+  "passed": true,
+  "scorePercent": 80.5497,
+  "testedMutants": 976,
+  "timedOut": 5,
+  "totalMutants": 976,
+  "unviable": 30,
+  "viable": 946
+}

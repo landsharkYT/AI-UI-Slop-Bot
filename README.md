@@ -181,7 +181,7 @@ scripts/fuzz-smoke.py --iterations 128
 
 The public-seam tests cover discovery, graph and route adapters, static style resolution, rule boundaries, coverage and resource ceilings, hostile inputs, baselines, deterministic parallel execution, CLI lifecycles, progress, and report artifacts.
 
-Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, evidence order, and fail-closed hosted validators are in the [qualification program](qualification/program.md). Qualification Shot 2 completed the local TEST-004 mutation gate at 80.6311%; Qualification Shot 3 wired reference, progress, and five-target native decisions without promoting local rehearsal data. A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
+Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, evidence order, and fail-closed hosted validators are in the [qualification program](qualification/program.md). The current `0.14.0` candidate passes the local TEST-004 mutation gate at 80.5497%; Qualification Shot 3 wired reference, progress, and five-target native decisions without promoting local rehearsal data. A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
 
 ### Build-disk maintenance
 
@@ -200,7 +200,7 @@ The latest real-repository calibration reduced EventCardSite from 31 mixed findi
 
 Design rationale and counterexample provenance from *Refactoring UI* are documented in the [reference traceability matrix](docs/references/refactoring-ui-traceability.md). The book informs explanations and counterexamples; it is not treated as a machine-enforceable taste specification.
 
-Full V1 validation still requires executed reference-runner results, hosted release smoke tests, authenticated release assets, a passing mutation run, and blind customer calibration. The workloads and protocols are now committed, but unexecuted protocols are not evidence. See [qualification](qualification/README.md), [Shot 7](docs/shot-7.md), and its [local evidence](docs/evidence/SHOT7-LOCAL.md).
+Full V1 validation still requires executed reference-runner results, hosted release smoke tests, authenticated release assets, and blind customer calibration. The local mutation gate passes, but the other committed protocols remain unexecuted and are not evidence. See [qualification](qualification/README.md), [implementation-exit evidence](docs/evidence/V1-IMPLEMENTATION-EXIT-2026-08-01.md), [Shot 7](docs/shot-7.md), and its [local evidence](docs/evidence/SHOT7-LOCAL.md).
 
 ## License
 
