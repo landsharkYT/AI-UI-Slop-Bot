@@ -20,7 +20,17 @@
     "evidenceDigestAlgorithmVersion": { "type": "string" },
     "summary": {
       "type": "object",
-      "required": ["outcome", "scopeCount", "findingCount"]
+      "required": ["outcome", "scopeCount", "findingCount", "scopeStatuses"],
+      "properties": {
+        "outcome": { "enum": ["success", "incomplete", "not_applicable", "insufficient_analysis", "invalid_lifecycle", "policy_regression"] },
+        "scopeCount": { "type": "integer", "minimum": 0 },
+        "findingCount": { "type": "integer", "minimum": 0 },
+        "scopeStatuses": {
+          "type": "object",
+          "additionalProperties": { "enum": ["complete", "incomplete", "not_applicable"] }
+        }
+      },
+      "additionalProperties": false
     },
     "scopes": {
       "type": "array",
@@ -44,6 +54,7 @@
           "resourceUsage"
         ],
         "properties": {
+          "status": { "enum": ["complete", "incomplete", "not_applicable"] },
           "resourceUsage": {
             "type": "object",
             "required": ["sourceBytesRead", "parserArenaPeakBytes", "peakAccountedAnalysisBytes", "astNodesSeen", "diagnosticsEmitted"],

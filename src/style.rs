@@ -403,31 +403,62 @@ impl<'a> StyleAnalysis<'a> {
                 ));
             }
         }
-        let combined_plain_css = self
-            .plain_css_sources
-            .iter()
-            .map(|(_, source)| source.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let outcome = collect_plain_css_semantic_classes(
-            &combined_plain_css,
-            &custom_properties,
-            &mut self.semantic_utilities,
-            &mut self.semantic_structures,
-            &mut self.semantic_cards,
-            &mut self.semantic_traits,
-        );
-        if outcome.unresolved_selectors {
-            self.unresolved.insert(
-                "signal-bearing conditional or compound plain CSS selectors remain unresolved"
-                    .to_owned(),
+        let mut seen_plain_classes = BTreeSet::new();
+        let mut ambiguous_plain_classes = BTreeSet::new();
+        for (_, source) in &self.plain_css_sources {
+            let mut local_utilities = BTreeMap::new();
+            let mut local_structures = BTreeMap::new();
+            let mut local_cards = BTreeSet::new();
+            let mut local_traits = BTreeMap::new();
+            let outcome = collect_plain_css_semantic_classes(
+                source,
+                &custom_properties,
+                &mut local_utilities,
+                &mut local_structures,
+                &mut local_cards,
+                &mut local_traits,
             );
+            if outcome.unresolved_selectors {
+                self.unresolved.insert(
+                    "signal-bearing conditional or compound plain CSS selectors remain unresolved"
+                        .to_owned(),
+                );
+            }
+            if outcome.unresolved_variables {
+                self.unresolved.insert(
+                    "unresolved, ambiguous, or cyclic plain CSS custom properties remain unresolved"
+                        .to_owned(),
+                );
+            }
+            let local_names = local_utilities
+                .keys()
+                .chain(local_structures.keys())
+                .chain(local_cards.iter())
+                .chain(local_traits.keys())
+                .cloned()
+                .chain(outcome.resolved_classes)
+                .collect::<BTreeSet<_>>();
+            for name in local_names {
+                if !seen_plain_classes.insert(name.clone()) {
+                    ambiguous_plain_classes.insert(name);
+                }
+            }
+            merge_semantic_maps(&mut self.semantic_utilities, local_utilities);
+            merge_semantic_maps(&mut self.semantic_structures, local_structures);
+            self.semantic_cards.extend(local_cards);
+            merge_semantic_maps(&mut self.semantic_traits, local_traits);
         }
-        if outcome.unresolved_variables {
-            self.unresolved.insert(
-                "unresolved, ambiguous, or cyclic plain CSS custom properties remain unresolved"
-                    .to_owned(),
-            );
+        if !ambiguous_plain_classes.is_empty() {
+            for name in &ambiguous_plain_classes {
+                self.semantic_utilities.remove(name);
+                self.semantic_structures.remove(name);
+                self.semantic_cards.remove(name);
+                self.semantic_traits.remove(name);
+            }
+            self.unresolved.insert(format!(
+                "plain CSS classes declared across multiple stylesheets have no proven cascade order: {}",
+                ambiguous_plain_classes.into_iter().collect::<Vec<_>>().join(", ")
+            ));
         }
         let semantic_utilities_resolved = self
             .semantic_utilities
@@ -615,6 +646,7 @@ fn collect_v4_custom_utilities(
 struct PlainCssOutcome {
     unresolved_selectors: bool,
     unresolved_variables: bool,
+    resolved_classes: BTreeSet<String>,
 }
 
 fn collect_plain_css_custom_properties(
@@ -694,7 +726,7 @@ fn collect_plain_css_semantic_classes(
             if !supported_tailwind_block && has_semantics {
                 outcome.unresolved_selectors = true;
             }
-        } else if has_semantics {
+        } else if has_semantics || has_supported_plain_css_declarations(body) {
             for selector in header.split(',').map(str::trim) {
                 if let Some((name, pseudo_element)) = simple_css_class_name(selector) {
                     if pseudo_element {
@@ -705,6 +737,7 @@ fn collect_plain_css_semantic_classes(
                             declarations.push(';');
                         }
                     } else {
+                        outcome.resolved_classes.insert(name.to_owned());
                         let declarations = base_declarations.entry(name.to_owned()).or_default();
                         declarations.push_str(body);
                         declarations.push(';');
@@ -747,6 +780,35 @@ fn collect_plain_css_semantic_classes(
         }
     }
     outcome
+}
+
+fn merge_semantic_maps(
+    target: &mut BTreeMap<String, BTreeSet<String>>,
+    source: BTreeMap<String, BTreeSet<String>>,
+) {
+    for (name, values) in source {
+        target.entry(name).or_default().extend(values);
+    }
+}
+
+fn has_supported_plain_css_declarations(body: &str) -> bool {
+    body.split(';').any(|declaration| {
+        declaration.split_once(':').is_some_and(|(property, _)| {
+            matches!(
+                property.trim().to_ascii_lowercase().as_str(),
+                "border-radius"
+                    | "box-shadow"
+                    | "background"
+                    | "background-color"
+                    | "background-image"
+                    | "padding"
+                    | "border"
+                    | "font-size"
+                    | "letter-spacing"
+                    | "text-transform"
+            )
+        })
+    })
 }
 
 fn classify_plain_css_structure(
@@ -927,9 +989,16 @@ fn classify_plain_css_declarations(
         } else {
             raw_value.to_owned()
         };
+        if property == "background" {
+            declarations.remove("background-image");
+        }
         declarations.insert(property, value);
     }
+    let has_background_image = declarations.contains_key("background-image");
     for (property, value) in declarations {
+        if property == "background" && has_background_image {
+            continue;
+        }
         let classifier = match property.as_str() {
             "border-radius" => classify_radius as fn(&str) -> Option<&'static str>,
             "box-shadow" => classify_shadow,

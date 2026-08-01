@@ -11,9 +11,9 @@ Status: V1 Implementation Candidate; bounded feature surface locally verified an
 | Syntax mechanics | Oxc 0.142.0 |
 | Tailwind | Literal utilities, selected semantic arbitrary values, configured/manifest/lockfile major-version resolution, safe static v3 theme semantics alongside visible dynamic coverage loss, and bounded recursive v4 `@theme`/`@utility` resolution across static imports |
 | Inline styles | Literal and repository-local shared static object values for supported decorative categories |
-| Plain CSS | Statically referenced scope-local stylesheets; source-ordered declarations for simple class selectors (including later overrides), bounded unique global static custom properties, generated simple `::before`/`::after` decoration, restrained card surfaces, repeated grids, eyebrow typography, and compact control-surface traits share the signal model; scoped/ambiguous/cyclic variables and conditional or compound signal-bearing selectors become explicit coverage loss |
+| Plain CSS | Statically referenced scope-local stylesheets; source-ordered declarations within one stylesheet for simple class selectors (including later overrides), bounded unique global static custom properties, generated simple `::before`/`::after` decoration, restrained card surfaces, repeated grids, eyebrow typography, and compact control-surface traits share the signal model; duplicate semantic classes across stylesheets, scoped/ambiguous/cyclic variables, and conditional or compound signal-bearing selectors become explicit coverage loss |
 | Configuration | `ai-ui-slop.config.jsonc`, schema 1 |
-| Canonical report | JSON schema 8 and Markdown projection, including applicability, canonical resource usage, exact Finding evidence, score contributions, selected component state, and score-interpretation qualification |
+| Canonical report | JSON schema 8 and Markdown projection, including typed per-scope applicability/status, canonical resource usage, exact Finding evidence, score contributions, selected component state, and score-interpretation qualification |
 | Baseline | JSON schema 2 with semantic migration preview |
 | Rule pack | `1.0.0-beta.8`, eleven executable rule paths, semantic structural-region safeguards, and bounded component/repository aggregation |
 | Page Archetypes | Fourteen built-in IDs, `unknown`, and declarative custom definitions |

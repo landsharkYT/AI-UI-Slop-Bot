@@ -18,7 +18,7 @@ Design rationale and counterexample provenance are recorded in the [Refactoring 
 - The actionable owner is the nearest supported named React function or arrow-function component.
 - The reachable-state family is `default`; unresolved runtime branches never contribute co-occurring signals.
 - One rule, owner, semantic occurrence key, and state family aggregate into one Finding.
-- Literal Tailwind classes, static inline-style values, and bounded statically referenced plain-CSS values are high-confidence evidence. Supported simple-class declarations follow source order, so later declarations override earlier values; plain-CSS custom properties contribute only when global definitions resolve uniquely within bounded recursion and output limits; generated simple `::before` and `::after` decoration composes with its base class. Scoped, unsupported, or ambiguous composition is a coverage diagnostic and does not contribute.
+- Literal Tailwind classes, static inline-style values, and bounded statically referenced plain-CSS values are high-confidence evidence. Supported simple-class declarations within one stylesheet follow source order, so later declarations override earlier values; the same semantic class declared across several stylesheets has no proven runtime order and becomes coverage loss. Plain-CSS custom properties contribute only when global definitions resolve uniquely within bounded recursion and output limits; generated simple `::before` and `::after` decoration composes with its base class. Scoped, unsupported, or ambiguous composition is a coverage diagnostic and does not contribute.
 - House Style approval neutralizes only the matched signal contribution. An approved primitive suppresses Findings owned by that exact normalized module/export pair. A narrow Suppression applies only to its exact rule, path, and owner.
 - Findings are advisory unless effective policy gives them an `enforce` disposition.
 - Scores use the global bands `minimal` 0–19, `low` 20–39, `moderate` 40–59, `high` 60–79, and `dominant` 80–100.
@@ -67,8 +67,8 @@ Design rationale and counterexample provenance are recorded in the [Refactoring 
 - Rule ID: `cardification`; contract version: `0.1.0-alpha`.
 - Entity: one component owner.
 - Activation: either at least five card-like decorated display containers, or at least three with a nested card-like depth of two or more.
-- A card-like container has padding plus at least one of outline, shadow, background treatment, or extreme radius. Restrained plain-CSS surfaces require padding and a non-transparent background plus a border or radius; class names are not evidence.
-- Exclusions: a single card, data grids, dialogs, and approved shared card primitives.
+- A card-like container has padding plus at least one of outline, shadow, background treatment, or extreme radius. Restrained plain-CSS surfaces require padding and a non-transparent background plus a border or radius; class names are not positive evidence.
+- Exclusions: a single card, data grids, dialogs, semantic structural regions (`aside`, `header`, `footer`, `nav`, and equivalent supported ARIA roles), class-identified sidebar/drawer/status surfaces, and approved shared card primitives.
 - Score: 42 base + 5 per card beyond three + 12 for nested-card evidence; cap 85.
 - Occurrence key: `owner-card-system`.
 - Coverage: unresolved ownership or styling reduces coverage and never creates inferred cards.

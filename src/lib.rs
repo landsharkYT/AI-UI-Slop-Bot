@@ -514,7 +514,7 @@ impl<'a> CandidateVisitor<'a> {
             && !element.children.is_empty()
             && !has_dialog_role(element);
         let structural_surface = matches!(tag.as_str(), "aside" | "header" | "footer" | "nav")
-            || has_any_role(element, &["status", "navigation", "complementary"]);
+            || has_any_role(element, &["status", "alert", "navigation", "complementary"]);
         let child_element_count = element
             .children
             .iter()
@@ -603,6 +603,10 @@ impl<'a> CandidateVisitor<'a> {
             } else {
                 None
             };
+            let structural_surface = structural_surface
+                || class_tokens
+                    .iter()
+                    .any(|token| has_structural_surface_class_hint(token));
             let card_like = !structural_surface
                 && (class_tokens
                     .iter()
@@ -723,6 +727,20 @@ impl<'a> CandidateVisitor<'a> {
         } else {
             object_expression_property(props, "children").is_some()
         };
+        let structural_surface = matches!(tag.as_str(), "aside" | "header" | "footer" | "nav")
+            || object_expression_property(props, "role")
+                .and_then(static_selector_value)
+                .is_some_and(|role| {
+                    matches!(
+                        role.as_str(),
+                        "status"
+                            | "alert"
+                            | "navigation"
+                            | "complementary"
+                            | "dialog"
+                            | "alertdialog"
+                    )
+                });
         let snippet = source_slice(self.source, call.span.start, call.span.end)
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -739,7 +757,7 @@ impl<'a> CandidateVisitor<'a> {
                     tag.as_str(),
                     "button" | "input" | "select" | "textarea" | "option" | "label"
                 ),
-            matches!(tag.as_str(), "aside" | "header" | "footer" | "nav"),
+            structural_surface,
             0,
         );
     }
@@ -3680,6 +3698,17 @@ fn has_any_role(element: &JSXElement<'_>, roles: &[&str]) -> bool {
                     if roles.contains(&value.value.as_str())
             )
     })
+}
+
+fn has_structural_surface_class_hint(token: &str) -> bool {
+    token
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|segment| {
+            matches!(
+                segment.to_ascii_lowercase().as_str(),
+                "sidebar" | "drawer" | "status"
+            )
+        })
 }
 
 fn is_component_name(name: &str) -> bool {

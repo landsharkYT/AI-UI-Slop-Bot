@@ -50,7 +50,7 @@ Use `--format terminal` for triage, `--format markdown` for a human-readable std
 
 Do not use the repository score alone as a quality grade. Read the result in this order:
 
-1. **Applicability and coverage:** `not_applicable` means the scope had no supported JSX/TSX input and is not a clean-UI result. Otherwise, `complete` or `partial` dimensions tell you what the scanner could resolve; a `coverage_limited` interpretation cannot support a clean bill of health.
+1. **Applicability and coverage:** `not_applicable` means the scope had no supported React source input and is not a clean-UI result. Otherwise, `complete` or `partial` dimensions tell you what the scanner could resolve; a `coverage_limited` interpretation cannot support a clean bill of health.
 2. **Finding evidence:** verify that each signal-specific snippet actually supports the claimed pattern.
 3. **Owner and reachable state:** confirm the finding belongs to the page/component and state you care about.
 4. **Rule explanation:** decide whether the repeated treatment is context-insensitive or a purposeful part of the product.

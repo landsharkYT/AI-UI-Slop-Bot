@@ -122,6 +122,7 @@ pub struct ReportSummary {
     pub outcome: String,
     pub scope_count: usize,
     pub finding_count: usize,
+    pub scope_statuses: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -355,6 +356,10 @@ pub fn analyze_repository_with_progress(
     }
     scopes.sort_by(|left, right| left.id.cmp(&right.id));
     let finding_count = scopes.iter().map(|scope| scope.findings.len()).sum();
+    let scope_statuses = scopes
+        .iter()
+        .map(|scope| (scope.id.clone(), scope.status.clone()))
+        .collect();
     let outcome = if scopes.iter().any(|scope| scope.status == "incomplete") {
         "incomplete"
     } else if scopes.iter().all(|scope| scope.status == "not_applicable") {
@@ -373,6 +378,7 @@ pub fn analyze_repository_with_progress(
             outcome: outcome.to_owned(),
             scope_count: scopes.len(),
             finding_count,
+            scope_statuses,
         },
         scopes,
     })
@@ -708,8 +714,9 @@ fn analyze_scope(
         diagnostics.push(ScopeDiagnostic {
             reason: "no-eligible-source".to_owned(),
             path: effective.relative_root.clone(),
-            detail: "no eligible JSX/TSX source files were discovered in this Analysis Scope"
-                .to_owned(),
+            detail:
+                "no eligible supported React source files were discovered in this Analysis Scope"
+                    .to_owned(),
         });
     }
     let status = if discovered == 0 {
@@ -798,7 +805,7 @@ pub fn render_refactoring_brief(report: &CanonicalReport) -> String {
         .any(|dimension| dimension.status == "partial");
         if scope.status == "not_applicable" {
             output.push_str(
-                "Applicability: **no supported JSX/TSX source was available; zero Findings is not a clean-UI result.**\n\n",
+                "Applicability: **no supported React source was available; zero Findings is not a clean-UI result.**\n\n",
             );
         } else if scope.status == "incomplete" || partial_coverage {
             output.push_str(
