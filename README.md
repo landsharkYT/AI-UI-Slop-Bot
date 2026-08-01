@@ -200,6 +200,17 @@ The latest real-repository calibration reduced EventCardSite from 31 mixed findi
 
 Design rationale and counterexample provenance from *Refactoring UI* are documented in the [reference traceability matrix](docs/references/refactoring-ui-traceability.md). The book informs explanations and counterexamples; it is not treated as a machine-enforceable taste specification.
 
+## Reusable agent skill
+
+The portable [Audit and Fix UI Slop skill](skills/audit-and-fix-ui-slop/README.md) can be copied into another repository's `.agents/skills/` directory or installed in `~/.codex/skills/`. It includes agent instructions, a conservative remediation guide, and a tested Bash runner that initializes, validates, scans, preserves exit codes, and records durable evidence without editing application source or accepting a baseline.
+
+Invoke it from a compatible agent with:
+
+```text
+Use $audit-and-fix-ui-slop to audit this repository, fix only justified findings,
+run the repository's checks, rescan, and report the before/after evidence.
+```
+
 Full V1 validation still requires executed reference-runner results, hosted release smoke tests, authenticated release assets, and blind customer calibration. The local mutation gate passes, but the other committed protocols remain unexecuted and are not evidence. See [qualification](qualification/README.md), [implementation-exit evidence](docs/evidence/V1-IMPLEMENTATION-EXIT-2026-08-01.md), [Shot 7](docs/shot-7.md), and its [local evidence](docs/evidence/SHOT7-LOCAL.md).
 
 ## License

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Audit and Fix UI Slop"
+  short_description: "Audit and remediate repetitive AI-style UI"
+  default_prompt: "Use $audit-and-fix-ui-slop to audit this repository, fix justified findings, and verify the result."
