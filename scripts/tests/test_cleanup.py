@@ -31,6 +31,16 @@ class CleanupCommandTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def populate_generated_files(self):
+        # Model a real Cargo-owned target. Some Cargo versions refuse to clean a
+        # manually fabricated directory without this cache-directory safety tag.
+        cache_tag = self.repository / "target/CACHEDIR.TAG"
+        cache_tag.parent.mkdir(parents=True, exist_ok=True)
+        cache_tag.write_text(
+            "Signature: 8a477f597d28d172789f06886806bc55\n"
+            "# This file is a cache directory tag created by cargo.\n"
+            "# For information about cache directory tags see https://bford.info/cachedir/\n",
+            encoding="utf-8",
+        )
         for relative in [
             "target/debug/deps/test-binary",
             "target/release/ai-ui-slop",
