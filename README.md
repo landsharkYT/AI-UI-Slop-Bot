@@ -187,14 +187,38 @@ Full V1 qualification is deliberately separate from this local gate. The frozen 
 
 Cargo writes reproducible build output to `target/`, which is ignored by Git. This project has many integration-test binaries linked against Oxc, so repeated builds under different source and compiler states can leave several generations of large artifacts there. The development and test profiles retain line-table diagnostics but disable full debug symbols and incremental caches to keep routine builds bounded.
 
-Check and reclaim the generated space with:
+Use the repository-owned cleanup command instead of deleting build directories ad hoc:
 
 ```sh
-du -sh target 2>/dev/null || true
-cargo clean
+# Read-only size inventory; this is also the default with no arguments.
+scripts/cleanup.sh inspect
+
+# Preview or perform routine cleanup. Preserves target/release.
+scripts/cleanup.sh routine --dry-run
+scripts/cleanup.sh routine
+
+# Preview or perform complete Cargo cleanup, including release output.
+scripts/cleanup.sh full --dry-run
+scripts/cleanup.sh full --yes
 ```
 
-`cargo clean` removes only Cargo-generated artifacts; the next build recreates what it needs. It does not remove source, configuration, reports outside `target/`, or Git history.
+`routine` removes `target/debug` and mutation temporary workspaces while preserving `target/release`, raw qualification results, committed evidence, and `.ai-ui-slop` reports. `full` delegates to `cargo clean` against this repository's explicit `target` directory and requires `--yes`. Both modes reject a symlinked `target` directory and never accept an arbitrary deletion path.
+
+Raw `target/qualification` and ignored root `mutants.out*` results may underpin a qualification decision. Routine cleanup preserves them unless, after exporting the required durable evidence, you explicitly confirm the additional scope:
+
+```sh
+scripts/cleanup.sh routine --include-qualification --yes
+```
+
+`full --yes` removes the entire Cargo `target` directory, including `target/qualification`; root `mutants.out*` results still require `--include-qualification`.
+
+The ignored `.opencode/node_modules` cache is separate from Cargo output. Remove it only through the explicit confirmed option:
+
+```sh
+scripts/cleanup.sh routine --include-opencode --yes
+```
+
+The next build recreates whatever generated Cargo output it needs. Source, configuration, Git history, committed qualification evidence, `.opencode` settings, and scanner reports outside `target/` are not cleanup targets.
 
 The latest real-repository calibration reduced EventCardSite from 31 mixed findings to six coherent Control Surface Homogenization findings while removing false framework, dialog-decoration, and stock-template clusters. See [EventCardSite calibration evidence](docs/evidence/EVENTCARD-CALIBRATION.md).
 
