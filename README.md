@@ -2,7 +2,7 @@
 
 AI UI Slop Bot is an evidence-first Rust analyzer for repeated, context-insensitive frontend aesthetics: interchangeable landing-page formulas, excessive card shells, stock framework recipes, effect stacking, and the “everything has the same compact border” treatment.
 
-The current build is a **V1 Implementation Candidate** (`0.13.0`, rule pack `1.0.0-beta.7`). It is useful for design-review trials, not an objective taste oracle. The bounded V1 feature surface and provisional mutation gate are locally qualified; customer calibration, hosted-platform qualification, reference-runner performance, and authenticated release validation remain before Full V1. See the [support matrix](docs/support-matrix.md).
+The current build is a **V1 Implementation Candidate** (`0.14.0`, rule pack `1.0.0-beta.8`). It is useful for design-review trials, not an objective taste oracle. The bounded V1 feature surface and provisional mutation gate are locally qualified; customer calibration, hosted-platform qualification, reference-runner performance, and authenticated release validation remain before Full V1. See the [support matrix](docs/support-matrix.md).
 
 Advisory use-case testing may begin now. Keep enforcement disabled until the applicable Full V1 gates pass, record scanner and rule-pack versions, and preserve every reported coverage limitation.
 
@@ -50,7 +50,7 @@ Use `--format terminal` for triage, `--format markdown` for a human-readable std
 
 Do not use the repository score alone as a quality grade. Read the result in this order:
 
-1. **Coverage:** `complete` or `partial` dimensions tell you what the scanner could resolve. A `coverage_limited` interpretation cannot support a clean bill of health.
+1. **Applicability and coverage:** `not_applicable` means the scope had no supported JSX/TSX input and is not a clean-UI result. Otherwise, `complete` or `partial` dimensions tell you what the scanner could resolve; a `coverage_limited` interpretation cannot support a clean bill of health.
 2. **Finding evidence:** verify that each signal-specific snippet actually supports the claimed pattern.
 3. **Owner and reachable state:** confirm the finding belongs to the page/component and state you care about.
 4. **Rule explanation:** decide whether the repeated treatment is context-insensitive or a purposeful part of the product.
@@ -63,7 +63,7 @@ A finding can lead to four legitimate outcomes:
 - **Suppress it narrowly:** use a path/owner-specific suppression with a rationale for an exceptional case.
 - **Leave it advisory:** uncertainty is preferable to encoding an unreviewed judgment as policy.
 
-When asking an agent to refactor a finding, give it the generated brief and require it to preserve behavior, accessibility, responsive behavior, focus order, and user workflows. The detector identifies convergence evidence; it does not prove a safe replacement design.
+When asking an agent to refactor a finding, give it both generated artifacts. The brief now includes exact source locations, evidence snippets, and prominent coverage/applicability warnings; `report.json` remains the canonical machine input. Require the agent to verify the resolved source and CSS cascade before editing and to preserve behavior, accessibility, responsive behavior, focus order, and user workflows. The detector identifies convergence evidence; it does not prove a safe replacement design.
 
 ## A practical review loop
 

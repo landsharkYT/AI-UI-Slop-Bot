@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-ui-slop.dev/schema/report/7",
+  "$id": "https://ai-ui-slop.dev/schema/report/8",
   "title": "AI UI Slop Canonical Report",
   "type": "object",
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "artifactType": { "const": "ai-ui-slop.canonical-report" },
-    "schemaVersion": { "const": "7" },
+    "schemaVersion": { "const": "8" },
     "toolVersion": { "type": "string" },
     "rulePackVersion": { "type": "string" },
     "fingerprintAlgorithmVersion": { "type": "string" },
@@ -101,7 +101,7 @@
             "properties": {
               "score": { "type": "integer", "minimum": 0, "maximum": 100 },
               "band": { "type": "string" },
-              "interpretationStatus": { "enum": ["qualified", "coverage_limited"] },
+              "interpretationStatus": { "enum": ["qualified", "coverage_limited", "not_applicable"] },
               "contributions": {
                 "type": "array",
                 "items": { "$ref": "#/$defs/scoreContribution" }

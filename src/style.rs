@@ -402,24 +402,32 @@ impl<'a> StyleAnalysis<'a> {
                     "{path}: custom utility references an unresolved theme variable"
                 ));
             }
-            let outcome = collect_plain_css_semantic_classes(
-                source,
-                &custom_properties,
-                &mut self.semantic_utilities,
-                &mut self.semantic_structures,
-                &mut self.semantic_cards,
-                &mut self.semantic_traits,
+        }
+        let combined_plain_css = self
+            .plain_css_sources
+            .iter()
+            .map(|(_, source)| source.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let outcome = collect_plain_css_semantic_classes(
+            &combined_plain_css,
+            &custom_properties,
+            &mut self.semantic_utilities,
+            &mut self.semantic_structures,
+            &mut self.semantic_cards,
+            &mut self.semantic_traits,
+        );
+        if outcome.unresolved_selectors {
+            self.unresolved.insert(
+                "signal-bearing conditional or compound plain CSS selectors remain unresolved"
+                    .to_owned(),
             );
-            if outcome.unresolved_selectors {
-                self.unresolved.insert(format!(
-                    "{path}: signal-bearing conditional or compound plain CSS selectors remain unresolved"
-                ));
-            }
-            if outcome.unresolved_variables {
-                self.unresolved.insert(format!(
-                    "{path}: unresolved, ambiguous, or cyclic plain CSS custom properties remain unresolved"
-                ));
-            }
+        }
+        if outcome.unresolved_variables {
+            self.unresolved.insert(
+                "unresolved, ambiguous, or cyclic plain CSS custom properties remain unresolved"
+                    .to_owned(),
+            );
         }
         let semantic_utilities_resolved = self
             .semantic_utilities
@@ -656,6 +664,8 @@ fn collect_plain_css_semantic_classes(
     let source = strip_css_comments(source);
     let mut index = 0;
     let mut outcome = PlainCssOutcome::default();
+    let mut base_declarations = BTreeMap::<String, String>::new();
+    let mut generated_declarations = BTreeMap::<String, String>::new();
     while index < source.len() {
         let Some(relative_open) = source[index..].find('{') else {
             break;
@@ -687,28 +697,17 @@ fn collect_plain_css_semantic_classes(
         } else if has_semantics {
             for selector in header.split(',').map(str::trim) {
                 if let Some((name, pseudo_element)) = simple_css_class_name(selector) {
-                    if !pseudo_element || generated_pseudo_element(body) {
-                        if !signals.is_empty() {
-                            classes
-                                .entry(name.to_owned())
-                                .or_default()
-                                .extend(signals.clone());
+                    if pseudo_element {
+                        if generated_pseudo_element(body) {
+                            let declarations =
+                                generated_declarations.entry(name.to_owned()).or_default();
+                            declarations.push_str(body);
+                            declarations.push(';');
                         }
-                        if !semantic_structures.is_empty() {
-                            structures
-                                .entry(name.to_owned())
-                                .or_default()
-                                .extend(semantic_structures.clone());
-                        }
-                        if card_like {
-                            cards.insert(name.to_owned());
-                        }
-                        if !semantic_traits.is_empty() {
-                            traits
-                                .entry(name.to_owned())
-                                .or_default()
-                                .extend(semantic_traits.clone());
-                        }
+                    } else {
+                        let declarations = base_declarations.entry(name.to_owned()).or_default();
+                        declarations.push_str(body);
+                        declarations.push(';');
                     }
                 } else if selector.contains('.') {
                     outcome.unresolved_selectors = true;
@@ -716,6 +715,36 @@ fn collect_plain_css_semantic_classes(
             }
         }
         index = close + 1;
+    }
+    for (name, body) in base_declarations {
+        let (signals, unresolved_variables) =
+            classify_plain_css_declarations(&body, custom_properties);
+        let (semantic_structures, card_like, semantic_traits, structural_unresolved) =
+            classify_plain_css_structure(&body, custom_properties);
+        outcome.unresolved_variables |= unresolved_variables || structural_unresolved;
+        if !signals.is_empty() {
+            classes.entry(name.clone()).or_default().extend(signals);
+        }
+        if !semantic_structures.is_empty() {
+            structures
+                .entry(name.clone())
+                .or_default()
+                .extend(semantic_structures);
+        }
+        if card_like {
+            cards.insert(name.clone());
+        }
+        if !semantic_traits.is_empty() {
+            traits.entry(name).or_default().extend(semantic_traits);
+        }
+    }
+    for (name, body) in generated_declarations {
+        let (signals, unresolved_variables) =
+            classify_plain_css_declarations(&body, custom_properties);
+        outcome.unresolved_variables |= unresolved_variables;
+        if !signals.is_empty() {
+            classes.entry(name).or_default().extend(signals);
+        }
     }
     outcome
 }
@@ -875,18 +904,18 @@ fn classify_plain_css_declarations(
 ) -> (BTreeSet<String>, bool) {
     let mut signals = BTreeSet::new();
     let mut unresolved_variables = false;
+    let mut declarations = BTreeMap::<String, String>::new();
     for declaration in body.split(';') {
         let Some((property, raw_value)) = declaration.split_once(':') else {
             continue;
         };
-        let property = property.trim();
-        let classifier = match property {
-            "border-radius" => classify_radius as fn(&str) -> Option<&'static str>,
-            "box-shadow" => classify_shadow,
-            "background" | "background-image" => classify_gradient,
-            "padding" => classify_spacing,
-            _ => continue,
-        };
+        let property = property.trim().to_ascii_lowercase();
+        if !matches!(
+            property.as_str(),
+            "border-radius" | "box-shadow" | "background" | "background-image" | "padding"
+        ) {
+            continue;
+        }
         let value = if raw_value.contains("var(") {
             match resolve_plain_css_value(raw_value, custom_properties, &mut BTreeSet::new(), 0) {
                 Some(value) => value,
@@ -897,6 +926,16 @@ fn classify_plain_css_declarations(
             }
         } else {
             raw_value.to_owned()
+        };
+        declarations.insert(property, value);
+    }
+    for (property, value) in declarations {
+        let classifier = match property.as_str() {
+            "border-radius" => classify_radius as fn(&str) -> Option<&'static str>,
+            "box-shadow" => classify_shadow,
+            "background" | "background-image" => classify_gradient,
+            "padding" => classify_spacing,
+            _ => unreachable!("filtered declaration property"),
         };
         if let Some(signal) = classifier(&value) {
             signals.insert(signal.to_owned());

@@ -513,6 +513,8 @@ impl<'a> CandidateVisitor<'a> {
             )
             && !element.children.is_empty()
             && !has_dialog_role(element);
+        let structural_surface = matches!(tag.as_str(), "aside" | "header" | "footer" | "nav")
+            || has_any_role(element, &["status", "navigation", "complementary"]);
         let child_element_count = element
             .children
             .iter()
@@ -526,6 +528,7 @@ impl<'a> CandidateVisitor<'a> {
             span.start,
             snippet,
             eligible_display,
+            structural_surface,
             child_element_count,
         );
     }
@@ -540,6 +543,7 @@ impl<'a> CandidateVisitor<'a> {
         span_start: u32,
         snippet: String,
         eligible_display: bool,
+        structural_surface: bool,
         child_element_count: usize,
     ) {
         let (line, column) = line_column(self.source, span_start as usize);
@@ -599,20 +603,21 @@ impl<'a> CandidateVisitor<'a> {
             } else {
                 None
             };
-            let card_like = class_tokens
-                .iter()
-                .any(|token| self.semantic_card_classes.contains(token))
-                || (signature.iter().any(|signal| signal == "generous-padding")
-                    && signature.iter().any(|signal| {
-                        matches!(
-                            signal.as_str(),
-                            "extreme-radius"
-                                | "gradient-surface"
-                                | "large-shadow"
-                                | "decorative-outline"
-                                | "backdrop-treatment"
-                        )
-                    }));
+            let card_like = !structural_surface
+                && (class_tokens
+                    .iter()
+                    .any(|token| self.semantic_card_classes.contains(token))
+                    || (signature.iter().any(|signal| signal == "generous-padding")
+                        && signature.iter().any(|signal| {
+                            matches!(
+                                signal.as_str(),
+                                "extreme-radius"
+                                    | "gradient-surface"
+                                    | "large-shadow"
+                                    | "decorative-outline"
+                                    | "backdrop-treatment"
+                            )
+                        })));
             let mut stock_structures =
                 collect_stock_structures(tag, &class_tokens, &signature, child_element_count);
             for token in &class_tokens {
@@ -734,6 +739,7 @@ impl<'a> CandidateVisitor<'a> {
                     tag.as_str(),
                     "button" | "input" | "select" | "textarea" | "option" | "label"
                 ),
+            matches!(tag.as_str(), "aside" | "header" | "footer" | "nav"),
             0,
         );
     }
@@ -3659,6 +3665,10 @@ fn spacing_at_least(token: &str, prefix: &str, minimum: u16) -> bool {
 }
 
 fn has_dialog_role(element: &JSXElement<'_>) -> bool {
+    has_any_role(element, &["dialog", "alertdialog"])
+}
+
+fn has_any_role(element: &JSXElement<'_>, roles: &[&str]) -> bool {
     element.opening_element.attributes.iter().any(|attribute| {
         let JSXAttributeItem::Attribute(attribute) = attribute else {
             return false;
@@ -3667,7 +3677,7 @@ fn has_dialog_role(element: &JSXElement<'_>) -> bool {
             && matches!(
                 attribute.value.as_ref(),
                 Some(JSXAttributeValue::StringLiteral(value))
-                    if matches!(value.value.as_str(), "dialog" | "alertdialog")
+                    if roles.contains(&value.value.as_str())
             )
     })
 }

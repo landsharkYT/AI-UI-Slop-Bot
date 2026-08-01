@@ -798,7 +798,7 @@ fn run_schema(arguments: &[String]) -> Result<(), (u8, String)> {
 
 fn run_version() -> Result<(), (u8, String)> {
     println!(
-        "ai-ui-slop {}\nreport-schema 7\nconfig-schema 1\nbaseline-schema 2\nrule-pack {}\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
+        "ai-ui-slop {}\nreport-schema 8\nconfig-schema 1\nbaseline-schema 2\nrule-pack {}\nfingerprint-algorithm 2\nevidence-digest-algorithm 1",
         env!("CARGO_PKG_VERSION"),
         RULE_PACK_VERSION
     );

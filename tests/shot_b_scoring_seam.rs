@@ -79,7 +79,7 @@ fn canonical_json_and_markdown_project_score_explanations() {
     let json = serde_json::to_value(&report).expect("canonical JSON");
     let brief = render_refactoring_brief(&report);
 
-    assert_eq!(report.schema_version, "7");
+    assert_eq!(report.schema_version, "8");
     assert_eq!(
         json.pointer("/scopes/0/repositoryProfile/contributions/0/id")
             .and_then(serde_json::Value::as_str),

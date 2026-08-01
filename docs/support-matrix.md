@@ -11,11 +11,11 @@ Status: V1 Implementation Candidate; bounded feature surface locally verified an
 | Syntax mechanics | Oxc 0.142.0 |
 | Tailwind | Literal utilities, selected semantic arbitrary values, configured/manifest/lockfile major-version resolution, safe static v3 theme semantics alongside visible dynamic coverage loss, and bounded recursive v4 `@theme`/`@utility` resolution across static imports |
 | Inline styles | Literal and repository-local shared static object values for supported decorative categories |
-| Plain CSS | Statically referenced scope-local stylesheets; simple class selectors, bounded unique global static custom properties, generated simple `::before`/`::after` decoration, restrained card surfaces, repeated grids, eyebrow typography, and compact control-surface traits share the signal model; scoped/ambiguous/cyclic variables and conditional or compound signal-bearing selectors become explicit coverage loss |
+| Plain CSS | Statically referenced scope-local stylesheets; source-ordered declarations for simple class selectors (including later overrides), bounded unique global static custom properties, generated simple `::before`/`::after` decoration, restrained card surfaces, repeated grids, eyebrow typography, and compact control-surface traits share the signal model; scoped/ambiguous/cyclic variables and conditional or compound signal-bearing selectors become explicit coverage loss |
 | Configuration | `ai-ui-slop.config.jsonc`, schema 1 |
-| Canonical report | JSON schema 7 and Markdown projection, including canonical resource usage, score contributions, selected component state, and score-interpretation qualification |
+| Canonical report | JSON schema 8 and Markdown projection, including applicability, canonical resource usage, exact Finding evidence, score contributions, selected component state, and score-interpretation qualification |
 | Baseline | JSON schema 2 with semantic migration preview |
-| Rule pack | `1.0.0-beta.7`, eleven executable rule paths and bounded component/repository aggregation |
+| Rule pack | `1.0.0-beta.8`, eleven executable rule paths, semantic structural-region safeguards, and bounded component/repository aggregation |
 | Page Archetypes | Fourteen built-in IDs, `unknown`, and declarative custom definitions |
 | Static class composition | Literals, repository-local constants, static templates, finite conditionals, standard combinators, configured class helpers, CVA defaults/static selections/scalar-or-array compound variants, and bounded variant-condition families |
 | Repository discovery | Checkout/Trusted Policy `.gitignore`, built-in exclusions, internal symlink deduplication, external-symlink diagnostics, UTF-8 BOM and CRLF; `init` uses React plus browser-entrypoint evidence and bounded nested discovery |
@@ -31,7 +31,7 @@ Explicitly outside the V1 feature boundary:
 - aliased or transformed automatic-runtime factory calls and arbitrary render-transforming HOCs;
 - runtime CVA selections;
 - Tailwind plugin-provided semantics beyond bounded non-executing static interpretation;
-- a general CSS cascade, CSS Modules, and CSS-in-JS analysis.
+- specificity, `!important`, conditional/media-query cascade resolution, CSS Modules, and CSS-in-JS analysis beyond the supported source-ordered simple-class subset.
 
 Former V1 Implementation Blockers, implemented and locally verified in `0.13.0`:
 

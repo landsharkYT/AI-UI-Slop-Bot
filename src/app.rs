@@ -19,8 +19,8 @@ use crate::{
     style::{StyleAdapterReport, StyleRequest, inspect as inspect_style},
 };
 
-pub const REPORT_SCHEMA_VERSION: &str = "7";
-pub const RULE_PACK_VERSION: &str = "1.0.0-beta.7";
+pub const REPORT_SCHEMA_VERSION: &str = "8";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.8";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
@@ -357,6 +357,8 @@ pub fn analyze_repository_with_progress(
     let finding_count = scopes.iter().map(|scope| scope.findings.len()).sum();
     let outcome = if scopes.iter().any(|scope| scope.status == "incomplete") {
         "incomplete"
+    } else if scopes.iter().all(|scope| scope.status == "not_applicable") {
+        "not_applicable"
     } else {
         "success"
     };
@@ -702,7 +704,17 @@ fn analyze_scope(
                 detail: diagnostic.detail,
             }),
     );
-    let status = if parse_sufficient && style_sufficient && graph_sufficient {
+    if discovered == 0 {
+        diagnostics.push(ScopeDiagnostic {
+            reason: "no-eligible-source".to_owned(),
+            path: effective.relative_root.clone(),
+            detail: "no eligible JSX/TSX source files were discovered in this Analysis Scope"
+                .to_owned(),
+        });
+    }
+    let status = if discovered == 0 {
+        "not_applicable"
+    } else if parse_sufficient && style_sufficient && graph_sufficient {
         "complete"
     } else {
         "incomplete"
@@ -776,6 +788,23 @@ pub fn render_refactoring_brief(report: &CanonicalReport) -> String {
             scope.status,
             scope.repository_profile.interpretation_status
         ));
+        let partial_coverage = [
+            &scope.coverage.parse,
+            &scope.coverage.style_resolution,
+            &scope.coverage.component_graph,
+            &scope.coverage.route,
+        ]
+        .iter()
+        .any(|dimension| dimension.status == "partial");
+        if scope.status == "not_applicable" {
+            output.push_str(
+                "Applicability: **no supported JSX/TSX source was available; zero Findings is not a clean-UI result.**\n\n",
+            );
+        } else if scope.status == "incomplete" || partial_coverage {
+            output.push_str(
+                "Coverage warning: **analysis is incomplete in at least one dimension; verify Findings against source before editing.**\n\n",
+            );
+        }
         output.push_str("Score contributions:\n\n");
         for contribution in &scope.repository_profile.contributions {
             output.push_str(&format!(
@@ -807,13 +836,23 @@ pub fn render_refactoring_brief(report: &CanonicalReport) -> String {
                 ));
                 for finding in findings {
                     output.push_str(&format!(
-                        "   - `{}` · **{}** · {}/100 ({}) · {}\n",
+                        "   - `{}:{}:{}` · **{}** · {}/100 ({}) · {}\n",
                         escape_inline_code(&finding.path),
+                        finding.line,
+                        finding.column,
                         escape_markdown(&finding.owner),
                         finding.score,
                         finding.band,
                         escape_markdown(&finding.remediation)
                     ));
+                    for evidence in &finding.evidence {
+                        output.push_str(&format!(
+                            "     - Evidence: **{}** (weight {}) — {}\n",
+                            escape_markdown(&evidence.signal_id),
+                            evidence.weight,
+                            escape_markdown(&evidence.snippet)
+                        ));
+                    }
                     if let Some(impact) = scope
                         .finding_impacts
                         .iter()
@@ -1118,10 +1157,10 @@ fn aggregate_repository(
     RepositoryProfile {
         score: score.min(100) as u8,
         band: score_band(score.min(100) as u8).to_owned(),
-        interpretation_status: if scope_status == "complete" {
-            "qualified"
-        } else {
-            "coverage_limited"
+        interpretation_status: match scope_status {
+            "complete" => "qualified",
+            "not_applicable" => "not_applicable",
+            _ => "coverage_limited",
         }
         .to_owned(),
         contributions,
