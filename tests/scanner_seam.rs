@@ -13,7 +13,7 @@ fn fixture(name: &str) -> PathBuf {
 fn recurring_six_signal_shell_emits_one_finding_per_distinct_owner() {
     let report = scan(ScanRequest::new(fixture("recurring-shell"))).expect("scan succeeds");
 
-    assert_eq!(report.schema_version, "0.12.0");
+    assert_eq!(report.schema_version, "0.13.0");
     assert_eq!(report.coverage.files_discovered, 3);
     assert_eq!(report.coverage.files_analyzed, 3);
     assert!(report.coverage.unresolved.is_empty());

@@ -12,7 +12,7 @@ Shot 6 concentrates React ownership, source admission, module resolution, and sh
 - configured JSX parsing in `.js`, `.jsx`, `.ts`, and `.tsx` files;
 - inherited local tsconfig/jsconfig path aliases and workspace package `exports` resolution;
 - deterministic import edges for named/wildcard re-exports, cyclic barrels, and literal lazy imports;
-- canonical, file-level Finding impact evidence for rendered uses of a responsible shared primitive;
+- canonical Finding impact evidence for rendered uses of a responsible shared primitive (upgraded from file-level to component-level `path#owner` identities in `0.13.0`);
 - scalar-or-array CVA compound selectors;
 - static exclusivity for conflicting `data-[key=value]` and `aria-[key=value]` conditions, in addition to `dark`/`light`;
 - canonical report schema 5 and scanner `0.6.0`.

@@ -184,7 +184,7 @@ fn workspace_exports_inherited_paths_and_primitive_uses_are_canonical() {
         .find(|impact| impact.finding_fingerprint == finding.fingerprint)
         .expect("finding impact");
 
-    assert_eq!(impact.usage_sites, ["apps/web/App.tsx"]);
+    assert_eq!(impact.usage_sites, ["apps/web/App.tsx#App"]);
     assert!(scope.graph.edges.iter().any(|edge| {
         edge.kind == "imports" && edge.resolved && edge.to == "file:packages/ui/src/index.ts"
     }));

@@ -1,6 +1,6 @@
 # Shot 7 — V1 Implementation Closeout
 
-Status: implementation complete locally; use-case and hosted release validation remain open.
+Status: superseded by the `0.13.0` blocker closeout; external release validation remains open.
 
 Shot 7 closes the remaining implementation seams identified after Shot 6. It does not convert unrun customer studies or hosted-platform jobs into evidence.
 
@@ -18,6 +18,10 @@ Shot 7 closes the remaining implementation seams identified after Shot 6. It doe
 
 ## Local qualification boundary
 
-The complete local suite passes. This establishes a V1 implementation candidate suitable for use-case testing. It does not satisfy customer-satisfaction thresholds, the committed reference-runner performance gates, five-platform hosted smoke tests, authenticated tag-release verification, or the remaining broad fuzz/mutation program.
+The Shot 7 local suite passed and established a breadth-complete build suitable for use-case testing. Subsequent audits identified four V1 Implementation Blockers: bounded static Tailwind theme/custom-utility semantics, supported variant reachability, symbol-aware re-export provenance, and component-level shared-primitive attribution. The build also does not satisfy customer-satisfaction thresholds, committed reference-runner performance gates, five-platform hosted smoke tests, authenticated tag-release verification, or the remaining broad fuzz/mutation program.
 
-Those gates determine whether the implementation can be called **Validated MVP** or **Full V1**. Until their evidence exists, the accurate label is **V1 implementation complete; validation pending**.
+After the four implementation blockers are resolved and locally verified, the build may be called a **V1 Implementation Candidate**. The remaining external gates determine whether it may be called **Validated MVP** or **Full V1**.
+
+The `0.13.0` follow-up resolved those blockers through public-seam regressions and restored **V1 Implementation Candidate** status. The external gates remain unchanged.
+
+Advisory Use-Case Trials may run before those blockers close because real-repository feedback can improve their implementation and later calibration. These trials must remain non-enforcing, versioned, and explicit about known coverage limits; they are not release-acceptance evidence by themselves.

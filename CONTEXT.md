@@ -147,3 +147,19 @@ _Avoid_: Average user, universal taste
 **Calibration Case**:
 A labeled example containing frontend source, a rendered visual reference, expected Findings, acceptable exceptions, and reviewer judgments. Visuals validate whether source signals correspond to perceived convergence; they are not scanner input in V1.
 _Avoid_: Training example, screenshot rule
+
+**V1 Implementation Candidate**:
+A build that implements the bounded V1 feature surface and passes its local verification, but has not yet satisfied every external release-qualification gate. It is suitable for use-case testing but is not Full V1.
+_Avoid_: Full V1, finished release, validated release
+
+**V1 Implementation Blocker**:
+A missing or insufficiently verified behavior inside the bounded V1 feature surface that can materially change Findings, coverage, or actionable ownership. It must be resolved before a build becomes a V1 Implementation Candidate.
+_Avoid_: Release validation, deferred feature, enhancement
+
+**Advisory Use-Case Trial**:
+A real-repository evaluation of a development build whose Findings inform calibration and implementation without enforcing policy or implying V1 qualification. Trial results must identify the build and its known coverage limitations.
+_Avoid_: Release acceptance, production enforcement, Full V1 validation
+
+**Full V1**:
+A V1 Implementation Candidate that has also satisfied every mandatory platform, performance, release-trust, test-quality, and customer-calibration gate. The name is a release qualification, not merely a statement that coding stopped.
+_Avoid_: Feature complete, implementation complete, beta

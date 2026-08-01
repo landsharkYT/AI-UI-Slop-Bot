@@ -18,7 +18,7 @@ Shot 5 deepens Tailwind configuration analysis behind one crate-private module a
 
 ## Deliberate boundaries
 
-Only supported static radius, shadow, gradient, and spacing declarations currently define new Slop Signal mappings; other Tailwind theme and custom-utility semantics remain unresolved or informational. CVA array-valued selectors and runtime values remain conservative or unresolved. Condition simplification does not yet prove exclusivity for arbitrary data, ARIA, container, feature-query, or repository-defined custom variants. CSS Modules, CSS-in-JS, the browser cascade, and target plugins remain outside V1's current implemented surface.
+At Shot 5, only supported static radius, shadow, gradient, and spacing declarations defined new Slop Signal mappings; other Tailwind theme and custom-utility semantics remained unresolved or informational. CVA array-valued selectors and runtime values remained conservative or unresolved, and condition simplification did not yet prove exclusivity for arbitrary data, ARIA, container, feature-query, or repository-defined custom variants. The bounded static Tailwind and variant gaps were subsequently closed in `0.13.0`; CSS Modules, CSS-in-JS, the browser cascade, runtime CVA selections, and target-code execution remain outside V1.
 
 React ownership breadth, complete workspace/export and primitive-impact graphs, cancellation, allocator-accounted memory, hosted platform qualification, and customer calibration remain later gates.
 

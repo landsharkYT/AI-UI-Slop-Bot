@@ -6,16 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use oxc_allocator::Allocator;
-use oxc_ast::ast::{ImportDeclaration, ImportDeclarationSpecifier, JSXElement};
-use oxc_ast_visit::{
-    Visit,
-    walk::{walk_import_declaration, walk_jsx_element},
-};
-use oxc_parser::Parser;
-use oxc_span::SourceType;
-
-use crate::{AnalyzedOwner, IgnoreRule, ignored_path, load_ignore_rules};
+use crate::{AnalyzedOwner, AnalyzedRenderEdge, IgnoreRule, ignored_path, load_ignore_rules};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +51,7 @@ pub struct GraphRequest<'a> {
     pub root: &'a Path,
     pub ignore_policy_root: &'a Path,
     pub owners: &'a [AnalyzedOwner],
+    pub render_edges: &'a [AnalyzedRenderEdge],
     pub routes: &'a [(String, String, Vec<String>)],
     pub approved_primitives: &'a [(String, String)],
     pub max_edges: usize,
@@ -91,6 +83,7 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
             .or_default()
             .push(id);
     }
+    let symbol_index = SymbolIndex::build(request.root, &files, request.owners, &module_resolution);
 
     'files: for file in &files {
         let relative = normalize_path(request.root, file);
@@ -172,50 +165,50 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
                 break 'files;
             }
         }
+    }
 
-        for rendered_name in
-            extract_rendered_components(file, &source, request.root, &module_resolution)
-        {
-            candidate_edges += 1;
-            let targets = owners_by_name.get(&rendered_name);
-            let target =
-                targets.and_then(|targets| (targets.len() == 1).then(|| targets[0].clone()));
-            let resolved = target.is_some();
-            let target_id = target.unwrap_or_else(|| {
-                diagnostics.push(GraphDiagnostic {
-                    reason: "unresolved-component-edge".to_owned(),
-                    path: relative.clone(),
-                    detail: format!(
-                        "rendered component `{rendered_name}` has no unique repository owner"
-                    ),
-                });
-                format!("unresolved:component:{rendered_name}")
+    'renders: for render in request.render_edges {
+        if symbol_index.is_external_import(&render.path, &render.child_name) {
+            continue;
+        }
+        candidate_edges += 1;
+        let target = symbol_index.resolve_render(&render.path, &render.child_name, &owners_by_name);
+        let resolved = target.is_some();
+        let target_id = target.unwrap_or_else(|| {
+            diagnostics.push(GraphDiagnostic {
+                reason: "unresolved-component-edge".to_owned(),
+                path: render.path.clone(),
+                detail: format!(
+                    "rendered symbol `{}` has no unique repository owner",
+                    render.child_name
+                ),
             });
-            if resolved {
-                resolved_edges += 1;
-            }
-            nodes.entry(target_id.clone()).or_insert(GraphNode {
-                id: target_id.clone(),
-                kind: if resolved {
-                    "component".to_owned()
-                } else {
-                    "unresolved".to_owned()
-                },
-                path: None,
-            });
-            if !record_edge(
-                &mut edges,
-                GraphEdge {
-                    from: file_id.clone(),
-                    to: target_id,
-                    kind: "renders".to_owned(),
-                    resolved,
-                },
-                request.max_edges,
-            ) {
-                truncated = true;
-                break 'files;
-            }
+            format!("unresolved:component:{}", render.child_name)
+        });
+        if resolved {
+            resolved_edges += 1;
+        }
+        nodes.entry(target_id.clone()).or_insert(GraphNode {
+            id: target_id.clone(),
+            kind: if resolved {
+                "component".to_owned()
+            } else {
+                "unresolved".to_owned()
+            },
+            path: None,
+        });
+        if !record_edge(
+            &mut edges,
+            GraphEdge {
+                from: format!("component:{}#{}", render.path, render.parent_owner),
+                to: target_id,
+                kind: "renders".to_owned(),
+                resolved,
+            },
+            request.max_edges,
+        ) {
+            truncated = true;
+            break 'renders;
         }
     }
 
@@ -307,6 +300,219 @@ fn record_edge(edges: &mut BTreeSet<GraphEdge>, edge: GraphEdge, max_edges: usiz
     edges.contains(&edge) || (edges.len() < max_edges && edges.insert(edge))
 }
 
+#[derive(Default)]
+struct ModuleSymbols {
+    owners: BTreeSet<String>,
+    imports: BTreeMap<String, (String, String)>,
+    unresolved_imports: BTreeSet<String>,
+    external_imports: BTreeSet<String>,
+    exports: BTreeMap<String, (String, String)>,
+    star_exports: Vec<String>,
+}
+
+#[derive(Default)]
+struct SymbolIndex {
+    modules: BTreeMap<String, ModuleSymbols>,
+}
+
+impl SymbolIndex {
+    fn build(
+        root: &Path,
+        files: &[PathBuf],
+        owners: &[AnalyzedOwner],
+        module_resolution: &ModuleResolution,
+    ) -> Self {
+        let mut modules = BTreeMap::<String, ModuleSymbols>::new();
+        for owner in owners {
+            modules
+                .entry(owner.path.clone())
+                .or_default()
+                .owners
+                .insert(owner.owner.clone());
+        }
+        for path in files {
+            let relative = normalize_path(root, path);
+            let Ok(source) = fs::read_to_string(path) else {
+                continue;
+            };
+            let module = modules.entry(relative.clone()).or_default();
+            for statement in source.split(';').map(str::trim) {
+                if statement.starts_with("import ") {
+                    let Some((clause, specifier)) = import_clause(statement) else {
+                        continue;
+                    };
+                    let target = resolve_symbol_module(root, path, &specifier, module_resolution);
+                    for (imported, local) in named_bindings(&clause) {
+                        if let Some(target) = &target {
+                            module.imports.insert(local, (target.clone(), imported));
+                        } else if specifier.starts_with('.') {
+                            module.unresolved_imports.insert(local);
+                        } else {
+                            module.external_imports.insert(local);
+                        }
+                    }
+                    let default = clause.split(',').next().unwrap_or_default().trim();
+                    if !default.is_empty() && !default.starts_with('{') && !default.starts_with('*')
+                    {
+                        if let Some(target) = &target {
+                            module
+                                .imports
+                                .insert(default.to_owned(), (target.clone(), "default".to_owned()));
+                        } else if specifier.starts_with('.') {
+                            module.unresolved_imports.insert(default.to_owned());
+                        } else {
+                            module.external_imports.insert(default.to_owned());
+                        }
+                    }
+                } else if statement.starts_with("export * from ") {
+                    let Some(specifier) = first_quoted(statement) else {
+                        continue;
+                    };
+                    if let Some(target) =
+                        resolve_symbol_module(root, path, &specifier, module_resolution)
+                    {
+                        module.star_exports.push(target);
+                    }
+                } else if statement.starts_with("export {") {
+                    let Some(open) = statement.find('{') else {
+                        continue;
+                    };
+                    let Some(close) = statement[open + 1..].find('}').map(|at| open + 1 + at)
+                    else {
+                        continue;
+                    };
+                    let target = statement[close + 1..]
+                        .split_once(" from ")
+                        .and_then(|(_, source)| first_quoted(source))
+                        .and_then(|specifier| {
+                            resolve_symbol_module(root, path, &specifier, module_resolution)
+                        })
+                        .unwrap_or_else(|| relative.clone());
+                    for (local, exported) in named_bindings(&statement[open..=close]) {
+                        module.exports.insert(exported, (target.clone(), local));
+                    }
+                }
+            }
+            module.star_exports.sort();
+            module.star_exports.dedup();
+        }
+        Self { modules }
+    }
+
+    fn resolve_render(
+        &self,
+        source_path: &str,
+        local_name: &str,
+        owners_by_name: &BTreeMap<String, Vec<String>>,
+    ) -> Option<String> {
+        if self
+            .modules
+            .get(source_path)
+            .is_some_and(|module| module.owners.contains(local_name))
+        {
+            return Some(format!("component:{source_path}#{local_name}"));
+        }
+        if let Some((module, symbol)) = self
+            .modules
+            .get(source_path)
+            .and_then(|source| source.imports.get(local_name))
+            && let Some(target) = self.resolve_export(module, symbol, &mut BTreeSet::new(), 0)
+        {
+            return Some(target);
+        }
+        if self
+            .modules
+            .get(source_path)
+            .is_some_and(|module| module.unresolved_imports.contains(local_name))
+        {
+            return None;
+        }
+        owners_by_name
+            .get(local_name)
+            .and_then(|owners| (owners.len() == 1).then(|| owners[0].clone()))
+    }
+
+    fn is_external_import(&self, source_path: &str, local_name: &str) -> bool {
+        self.modules
+            .get(source_path)
+            .is_some_and(|module| module.external_imports.contains(local_name))
+    }
+
+    fn resolve_export(
+        &self,
+        module_path: &str,
+        symbol: &str,
+        visited: &mut BTreeSet<(String, String)>,
+        depth: usize,
+    ) -> Option<String> {
+        if depth > 64 || !visited.insert((module_path.to_owned(), symbol.to_owned())) {
+            return None;
+        }
+        let module = self.modules.get(module_path)?;
+        if module.owners.contains(symbol) {
+            return Some(format!("component:{module_path}#{symbol}"));
+        }
+        if let Some((target, target_symbol)) = module.exports.get(symbol)
+            && let Some(owner) = self.resolve_export(target, target_symbol, visited, depth + 1)
+        {
+            return Some(owner);
+        }
+        let mut matches = module
+            .star_exports
+            .iter()
+            .filter_map(|target| self.resolve_export(target, symbol, visited, depth + 1))
+            .collect::<BTreeSet<_>>();
+        (matches.len() == 1).then(|| matches.pop_first()).flatten()
+    }
+}
+
+fn import_clause(statement: &str) -> Option<(String, String)> {
+    let body = statement.strip_prefix("import ")?;
+    let (clause, source) = body.rsplit_once(" from ")?;
+    Some((clause.trim().to_owned(), first_quoted(source)?))
+}
+
+fn named_bindings(clause: &str) -> Vec<(String, String)> {
+    let Some(open) = clause.find('{') else {
+        return Vec::new();
+    };
+    let Some(close) = clause[open + 1..].find('}').map(|at| open + 1 + at) else {
+        return Vec::new();
+    };
+    clause[open + 1..close]
+        .split(',')
+        .filter_map(|binding| {
+            let binding = binding
+                .trim()
+                .strip_prefix("type ")
+                .unwrap_or(binding.trim());
+            if binding.is_empty() {
+                return None;
+            }
+            let (source, local) = binding
+                .split_once(" as ")
+                .map_or((binding, binding), |(source, local)| {
+                    (source.trim(), local.trim())
+                });
+            Some((source.to_owned(), local.to_owned()))
+        })
+        .collect()
+}
+
+fn resolve_symbol_module(
+    root: &Path,
+    source_path: &Path,
+    specifier: &str,
+    module_resolution: &ModuleResolution,
+) -> Option<String> {
+    let target = if specifier.starts_with('.') {
+        resolve_module_candidate(source_path.parent().unwrap_or(root), specifier)
+    } else {
+        module_resolution.resolve(root, specifier)
+    }?;
+    Some(normalize_path(root, &target))
+}
+
 #[derive(Debug)]
 struct ModuleSpecifier {
     specifier: String,
@@ -367,86 +573,6 @@ fn first_quoted(source: &str) -> Option<String> {
     let tail = &source[start + quote.len_utf8()..];
     let end = tail.find(quote)?;
     Some(tail[..end].to_owned())
-}
-
-fn extract_rendered_components(
-    path: &Path,
-    source: &str,
-    repository_root: &Path,
-    module_resolution: &ModuleResolution,
-) -> Vec<String> {
-    let Ok(source_type) = SourceType::from_path(path) else {
-        return Vec::new();
-    };
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, source_type.with_jsx(true)).parse();
-    if !parsed.diagnostics.is_empty() {
-        return Vec::new();
-    }
-    let local_bare_imports = extract_module_specifiers(source)
-        .into_iter()
-        .filter(|module| {
-            !module.dynamic
-                && !module.specifier.starts_with('.')
-                && module_resolution
-                    .resolve(repository_root, &module.specifier)
-                    .is_some()
-        })
-        .map(|module| module.specifier)
-        .collect();
-    let mut visitor = RenderedComponentVisitor {
-        names: BTreeSet::new(),
-        external_imports: BTreeSet::new(),
-        local_bare_imports,
-    };
-    visitor.visit_program(&parsed.program);
-    visitor
-        .names
-        .difference(&visitor.external_imports)
-        .cloned()
-        .collect()
-}
-
-struct RenderedComponentVisitor {
-    names: BTreeSet<String>,
-    external_imports: BTreeSet<String>,
-    local_bare_imports: BTreeSet<String>,
-}
-
-impl<'a> Visit<'a> for RenderedComponentVisitor {
-    fn visit_import_declaration(&mut self, declaration: &ImportDeclaration<'a>) {
-        let source = declaration.source.value.as_str();
-        if !source.starts_with('.')
-            && !source.starts_with('/')
-            && !self.local_bare_imports.contains(source)
-            && let Some(specifiers) = &declaration.specifiers
-        {
-            for specifier in specifiers {
-                let local = match specifier {
-                    ImportDeclarationSpecifier::ImportSpecifier(specifier) => {
-                        specifier.local.name.as_str()
-                    }
-                    ImportDeclarationSpecifier::ImportDefaultSpecifier(specifier) => {
-                        specifier.local.name.as_str()
-                    }
-                    ImportDeclarationSpecifier::ImportNamespaceSpecifier(specifier) => {
-                        specifier.local.name.as_str()
-                    }
-                };
-                self.external_imports.insert(local.to_owned());
-            }
-        }
-        walk_import_declaration(self, declaration);
-    }
-
-    fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {
-        if let Some(name) = element.opening_element.name.get_identifier_name()
-            && name.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
-        {
-            self.names.insert(name.to_string());
-        }
-        walk_jsx_element(self, element);
-    }
 }
 
 fn resolve_module_candidate(base_directory: &Path, specifier: &str) -> Option<PathBuf> {

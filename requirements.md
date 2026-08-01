@@ -58,6 +58,25 @@ The canonical domain definition of **AI UI Slop** is maintained in `CONTEXT.md`.
 
 Changed-file-only presentation, inline pull-request annotations, and a hosted GitHub App are post-V1 capabilities. Full V1 enforcement evaluates whole-repository results against a Reviewed Baseline and may return exit code 1 for policy-violating new or materially worsened Findings.
 
+**[MILESTONE-005]** The V1 feature boundary is bounded, non-executing static analysis. Runtime CVA selections, additional static recognition of arbitrary render-transforming higher-order components or plugin-provided Tailwind semantics, a general CSS cascade, CSS Modules, and CSS-in-JS analysis are explicitly post-V1 candidates. Executing target configuration or plugins remains prohibited. Encountering unsupported forms shall produce unresolved coverage where they could affect a result; their exclusion shall not be represented as successful analysis.
+
+**[MILESTONE-006]** A build that implements this bounded feature surface and passes local verification is a **V1 Implementation Candidate**, not Full V1. Hosted native-target qualification, committed reference-runner performance evidence, authenticated release verification, required fuzz and mutation evidence, and customer calibration remain mandatory Full V1 release gates and shall not be described as deferred features.
+
+**[MILESTONE-007]** Within the documented static-resolution and resource bounds, the following are V1 Implementation Blockers rather than post-V1 enhancements: semantic extraction from relevant static Tailwind v3 theme values and v4 theme/custom-utility declarations; reachability reasoning for supported container, feature-query, and custom variants; symbol-aware named and wildcard re-export provenance; and component-level impact attribution for supported shared primitives. Inputs that exceed the documented bounds may remain unresolved only when the scanner reports the resulting coverage loss as required elsewhere in this specification.
+
+### 3.2 V1 scope ledger
+
+**[MILESTONE-008]** This ledger is the authoritative classification of work near the V1 boundary. A Post-V1 Candidate is neither required for Full V1 nor promised for a later release. Moving an item between categories requires an explicit requirements change; it shall not happen implicitly because implementation or validation is inconvenient.
+
+| Classification | Items |
+| --- | --- |
+| **V1 Implementation Blockers** | Semantic extraction from relevant static Tailwind v3 theme values and v4 theme/custom-utility declarations; bounded reachability for supported container, feature-query, and custom variants; symbol-aware named and wildcard re-export provenance; component-level impact attribution for supported shared primitives. |
+| **Mandatory Full V1 Release Gates** | Every applicable V1 requirement and acceptance criterion, including hosted qualification of the five supported native targets, committed reference-runner performance and progress-overhead evidence, required fuzz and mutation evidence, authenticated hosted-release verification, and blind customer and Page Archetype calibration. |
+| **Post-V1 Candidates — not roadmap commitments** | Runtime CVA selection analysis; additional non-executing recognition of arbitrary render-transforming HOCs and Tailwind plugin semantics; general CSS cascade, CSS Modules, and CSS-in-JS analysis; changed-code-only presentation or enforcement; inline pull-request annotations; a hosted GitHub App; package-manager distribution channels; declarative third-party rule packs; persistent analysis caching; portable default profiles; and linking external accessibility results as a separate report dimension. |
+| **Product Safety Boundaries and Non-goals** | Claiming AI authorship or objective design quality; ranking unrelated repositories; executing target dependencies, scripts, modules, configuration, plugins, or arbitrary expressions; loading executable third-party rules; opaque machine-learned scoring; automatic source mutation or redesign; treating screenshots or prose as V1 scanner evidence; and replacing accessibility, linting, formatting, or type-checking tools. |
+
+**[MILESTONE-009]** Advisory Use-Case Trials may begin on a development build while V1 Implementation Blockers remain. Every such trial shall use advisory behavior, identify the scanner and rule-pack versions, disclose every open blocker and material coverage loss, and avoid Full V1, release-qualified, or enforcement-readiness claims. Baseline enforcement and release acceptance shall wait until all V1 Implementation Blockers are resolved and the applicable qualification gates have passed.
+
 ## 4. Users and use cases
 
 ### Primary users

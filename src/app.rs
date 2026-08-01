@@ -512,6 +512,7 @@ fn analyze_scope(
         max_directory_depth: effective.resources.max_directory_depth,
         max_wall_time_ms,
         max_reachable_states: effective.resources.max_reachable_states,
+        variant_assignments: style_inspection.variant_assignments,
         semantic_class_signals: style_inspection.semantic_utilities,
         semantic_class_structures: style_inspection.semantic_structures,
         semantic_card_classes: style_inspection.semantic_cards,
@@ -582,6 +583,7 @@ fn analyze_scope(
         root: &effective.absolute_root,
         ignore_policy_root,
         owners: &scan_report.owners,
+        render_edges: &scan_report.render_edges,
         routes: &graph_routes,
         approved_primitives: &approved_primitives,
         max_edges: effective.resources.max_graph_edges,
@@ -734,13 +736,13 @@ fn finding_impacts(findings: &[Finding], graph: &RepositoryGraph) -> Vec<Finding
         if edge.kind != "renders" || !edge.resolved {
             continue;
         }
-        let Some(path) = edge.from.strip_prefix("file:") else {
+        let Some(component) = edge.from.strip_prefix("component:") else {
             continue;
         };
         uses_by_component
             .entry(edge.to.clone())
             .or_default()
-            .push(path.to_owned());
+            .push(component.to_owned());
     }
     findings
         .iter()

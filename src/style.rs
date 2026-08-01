@@ -31,6 +31,7 @@ pub(crate) struct StyleRequest<'a> {
 
 pub(crate) struct StyleInspection {
     pub report: StyleAdapterReport,
+    pub variant_assignments: BTreeMap<String, (String, String)>,
     pub semantic_utilities: BTreeMap<String, BTreeSet<String>>,
     pub semantic_structures: BTreeMap<String, BTreeSet<String>>,
     pub semantic_cards: BTreeSet<String>,
@@ -57,6 +58,7 @@ struct StyleAnalysis<'a> {
     configuration_bytes: u64,
     resolved_configuration_values: u64,
     custom_variants: BTreeSet<String>,
+    variant_assignments: BTreeMap<String, (String, String)>,
     semantic_utilities: BTreeMap<String, BTreeSet<String>>,
     semantic_structures: BTreeMap<String, BTreeSet<String>>,
     semantic_cards: BTreeSet<String>,
@@ -79,6 +81,7 @@ impl<'a> StyleAnalysis<'a> {
             configuration_bytes: 0,
             resolved_configuration_values: 0,
             custom_variants: BTreeSet::new(),
+            variant_assignments: BTreeMap::new(),
             semantic_utilities: BTreeMap::new(),
             semantic_structures: BTreeMap::new(),
             semantic_cards: BTreeSet::new(),
@@ -181,23 +184,21 @@ impl<'a> StyleAnalysis<'a> {
         self.sources.insert(name.to_owned());
         if has_dynamic_v3_config(&source) {
             self.unresolved.insert(format!(
-                "{name}: dynamic Tailwind configuration remains unresolved"
+                "{name}: dynamic Tailwind configuration, including plugins, remains unresolved"
             ));
-        } else {
-            self.resolved_configuration_values += source
-                .lines()
-                .filter(|line| {
-                    let line = line.trim();
-                    line.contains(':')
-                        && (line.contains('"')
-                            || line.contains('\'')
-                            || line.split_once(':').is_some_and(|(_, value)| {
-                                value.trim_start().starts_with(char::is_numeric)
-                            }))
-                })
-                .count() as u64;
-            collect_v3_semantic_utilities(&source, &mut self.semantic_utilities);
         }
+        let before = self
+            .semantic_utilities
+            .values()
+            .map(BTreeSet::len)
+            .sum::<usize>();
+        collect_v3_semantic_utilities(&source, &mut self.semantic_utilities);
+        let after = self
+            .semantic_utilities
+            .values()
+            .map(BTreeSet::len)
+            .sum::<usize>();
+        self.resolved_configuration_values += after.saturating_sub(before) as u64;
         Ok(())
     }
 
@@ -260,13 +261,12 @@ impl<'a> StyleAnalysis<'a> {
         self.sources.insert(self.relative(&path));
         self.resolved_configuration_values += count_css_configuration_values(&source);
         collect_v4_semantic_utilities(&source, &mut self.semantic_utilities);
-        self.custom_variants
-            .extend(source.lines().filter_map(|line| {
-                line.trim_start()
-                    .strip_prefix("@custom-variant ")
-                    .and_then(|rest| rest.split_whitespace().next())
-                    .map(|name| name.trim_end_matches([';', '{']).to_owned())
-            }));
+        for (name, assignment) in custom_variant_declarations(&source) {
+            self.custom_variants.insert(name.clone());
+            if let Some(assignment) = assignment {
+                self.variant_assignments.insert(name, assignment);
+            }
+        }
         for line in source
             .lines()
             .filter(|line| line.trim_start().starts_with("@import"))
@@ -396,6 +396,12 @@ impl<'a> StyleAnalysis<'a> {
     fn finish(mut self) -> StyleInspection {
         let custom_properties = collect_plain_css_custom_properties(&self.plain_css_sources);
         for (path, source) in &self.plain_css_sources {
+            if collect_v4_custom_utilities(source, &custom_properties, &mut self.semantic_utilities)
+            {
+                self.unresolved.insert(format!(
+                    "{path}: custom utility references an unresolved theme variable"
+                ));
+            }
             let outcome = collect_plain_css_semantic_classes(
                 source,
                 &custom_properties,
@@ -424,6 +430,7 @@ impl<'a> StyleAnalysis<'a> {
             .collect::<BTreeSet<_>>()
             .len() as u64;
         StyleInspection {
+            variant_assignments: self.variant_assignments,
             report: StyleAdapterReport {
                 tailwind_version: self.version,
                 detection_source: self.detection_source,
@@ -441,6 +448,52 @@ impl<'a> StyleAnalysis<'a> {
             semantic_traits: self.semantic_traits,
         }
     }
+}
+
+fn custom_variant_declarations(source: &str) -> Vec<(String, Option<(String, String)>)> {
+    let mut declarations = Vec::new();
+    let mut remainder = source;
+    while let Some(index) = remainder.find("@custom-variant ") {
+        remainder = &remainder[index + "@custom-variant ".len()..];
+        let name = remainder
+            .split(|character: char| character.is_whitespace() || matches!(character, ';' | '{'))
+            .next()
+            .unwrap_or_default();
+        if name.is_empty() {
+            break;
+        }
+        let body = remainder
+            .split_once(';')
+            .map_or(remainder, |(declaration, _)| declaration);
+        declarations.push((name.to_owned(), selector_assignment(body)));
+        remainder = remainder
+            .split_once(';')
+            .map_or("", |(_, remaining)| remaining);
+    }
+    declarations
+}
+
+fn selector_assignment(selector: &str) -> Option<(String, String)> {
+    for namespace in ["data", "aria"] {
+        let marker = format!("[{namespace}-");
+        let Some(start) = selector.find(&marker).map(|start| start + 1) else {
+            continue;
+        };
+        let Some((body, _)) = selector[start..].split_once(']') else {
+            continue;
+        };
+        let Some((property, value)) = body.split_once('=') else {
+            continue;
+        };
+        let Some(property) = property.strip_prefix(&format!("{namespace}-")) else {
+            continue;
+        };
+        let value = value.trim().trim_matches(['\'', '"']);
+        if !property.is_empty() && !value.is_empty() {
+            return Some((format!("{namespace}:{property}"), value.to_owned()));
+        }
+    }
+    None
 }
 
 fn has_dynamic_v3_config(source: &str) -> bool {
@@ -491,12 +544,13 @@ fn collect_v3_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, 
 }
 
 fn collect_v4_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, BTreeSet<String>>) {
-    for (name, value) in css_custom_properties(source) {
+    let properties = css_custom_properties(source);
+    for (name, value) in &properties {
         let mapping = [
-            ("radius-", "rounded-", classify_radius(&value)),
-            ("shadow-", "shadow-", classify_shadow(&value)),
-            ("background-image-", "bg-", classify_gradient(&value)),
-            ("spacing-", "p-", classify_spacing(&value)),
+            ("radius-", "rounded-", classify_radius(value)),
+            ("shadow-", "shadow-", classify_shadow(value)),
+            ("background-image-", "bg-", classify_gradient(value)),
+            ("spacing-", "p-", classify_spacing(value)),
         ];
         for (variable_prefix, utility_prefix, signal) in mapping {
             if let Some(name) = name.strip_prefix(variable_prefix)
@@ -509,6 +563,19 @@ fn collect_v4_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, 
             }
         }
     }
+    let custom_properties = properties
+        .into_iter()
+        .map(|(name, value)| (name, BTreeSet::from([value])))
+        .collect::<BTreeMap<_, _>>();
+    collect_v4_custom_utilities(source, &custom_properties, utilities);
+}
+
+fn collect_v4_custom_utilities(
+    source: &str,
+    custom_properties: &BTreeMap<String, BTreeSet<String>>,
+    utilities: &mut BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    let mut unresolved_variables = false;
     let mut remainder = source;
     while let Some(index) = remainder.find("@utility ") {
         remainder = &remainder[index + "@utility ".len()..];
@@ -523,7 +590,8 @@ fn collect_v4_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, 
             break;
         };
         let body = &remainder[open + 1..close];
-        let signals = classify_css_declarations(body);
+        let (signals, unresolved) = classify_plain_css_declarations(body, custom_properties);
+        unresolved_variables |= unresolved;
         if !name.is_empty() && !signals.is_empty() {
             utilities
                 .entry(name.to_owned())
@@ -532,6 +600,7 @@ fn collect_v4_semantic_utilities(source: &str, utilities: &mut BTreeMap<String, 
         }
         remainder = &remainder[close + 1..];
     }
+    unresolved_variables
 }
 
 #[derive(Default)]
@@ -1053,26 +1122,6 @@ fn css_length_px(value: &str) -> Option<f64> {
     } else {
         None
     }
-}
-
-fn classify_css_declarations(body: &str) -> BTreeSet<String> {
-    let mut signals = BTreeSet::new();
-    for declaration in body.split(';') {
-        let Some((property, value)) = declaration.split_once(':') else {
-            continue;
-        };
-        let signal = match property.trim() {
-            "border-radius" => classify_radius(value),
-            "box-shadow" => classify_shadow(value),
-            "background" | "background-image" => classify_gradient(value),
-            "padding" => classify_spacing(value),
-            _ => None,
-        };
-        if let Some(signal) = signal {
-            signals.insert(signal.to_owned());
-        }
-    }
-    signals
 }
 
 fn json_tailwind_version(source: &str) -> Option<String> {

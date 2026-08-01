@@ -99,6 +99,7 @@ pub struct ScanPolicy {
     pub max_directory_depth: usize,
     pub max_wall_time_ms: u64,
     pub max_reachable_states: usize,
+    pub variant_assignments: BTreeMap<String, (String, String)>,
     pub semantic_class_signals: BTreeMap<String, BTreeSet<String>>,
     pub semantic_class_structures: BTreeMap<String, BTreeSet<String>>,
     pub semantic_card_classes: BTreeSet<String>,
@@ -136,6 +137,7 @@ impl Default for ScanPolicy {
             max_directory_depth: 128,
             max_wall_time_ms: 0,
             max_reachable_states: 256,
+            variant_assignments: BTreeMap::new(),
             semantic_class_signals: BTreeMap::new(),
             semantic_class_structures: BTreeMap::new(),
             semantic_card_classes: BTreeSet::new(),
@@ -186,6 +188,8 @@ pub struct ScanReport {
     pub root: String,
     pub findings: Vec<Finding>,
     pub owners: Vec<AnalyzedOwner>,
+    #[serde(skip)]
+    pub(crate) render_edges: Vec<AnalyzedRenderEdge>,
     pub coverage: Coverage,
     pub resource_usage: AnalysisResourceUsage,
 }
@@ -204,6 +208,13 @@ pub struct AnalysisResourceUsage {
 pub struct AnalyzedOwner {
     pub path: String,
     pub owner: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyzedRenderEdge {
+    pub path: String,
+    pub parent_owner: String,
+    pub child_name: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -347,6 +358,7 @@ struct CandidateVisitor<'a> {
     inline_style_bindings: BTreeMap<String, BTreeMap<&'static str, u8>>,
     cva_bindings: BTreeMap<String, CvaBinding>,
     max_reachable_states: usize,
+    variant_assignments: &'a BTreeMap<String, (String, String)>,
     semantic_class_signals: &'a BTreeMap<String, BTreeSet<String>>,
     semantic_class_structures: &'a BTreeMap<String, BTreeSet<String>>,
     semantic_card_classes: &'a BTreeSet<String>,
@@ -535,7 +547,11 @@ impl<'a> CandidateVisitor<'a> {
         let mut expanded_states = Vec::new();
         let mut state_overflow = false;
         for class_state in class_states {
-            match expand_variant_states(class_state, self.max_reachable_states) {
+            match expand_variant_states(
+                class_state,
+                self.max_reachable_states,
+                self.variant_assignments,
+            ) {
                 Some(states) => expanded_states.extend(states),
                 None => state_overflow = true,
             }
@@ -775,6 +791,7 @@ fn is_react_component_class(class: &Class<'_>) -> bool {
 fn expand_variant_states(
     state: ResolvedClassState,
     max_states: usize,
+    variant_assignments: &BTreeMap<String, (String, String)>,
 ) -> Option<Vec<ResolvedClassState>> {
     let mut base = Vec::new();
     let mut conditional = Vec::new();
@@ -804,7 +821,7 @@ fn expand_variant_states(
             .map(|(conditions, classes)| (conditions.clone(), classes.clone()))
             .collect::<Vec<_>>();
         for (existing_conditions, classes) in existing {
-            if !conditions_compatible(&existing_conditions, &conditions) {
+            if !conditions_compatible(&existing_conditions, &conditions, variant_assignments) {
                 continue;
             }
             let combined = existing_conditions
@@ -859,16 +876,22 @@ fn split_variant_token(token: &str) -> Vec<&str> {
     parts
 }
 
-fn conditions_compatible(left: &BTreeSet<String>, right: &BTreeSet<String>) -> bool {
+fn conditions_compatible(
+    left: &BTreeSet<String>,
+    right: &BTreeSet<String>,
+    variant_assignments: &BTreeMap<String, (String, String)>,
+) -> bool {
     if (left.contains("dark") && right.contains("light"))
         || (left.contains("light") && right.contains("dark"))
+        || conditions_negate_each_other(left, right)
+        || container_ranges_conflict(left, right)
     {
         return false;
     }
-    let Some(left_constraints) = condition_assignments(left) else {
+    let Some(left_constraints) = condition_assignments(left, variant_assignments) else {
         return false;
     };
-    let Some(right_constraints) = condition_assignments(right) else {
+    let Some(right_constraints) = condition_assignments(right, variant_assignments) else {
         return false;
     };
     !right_constraints.iter().any(|(property, value)| {
@@ -878,15 +901,58 @@ fn conditions_compatible(left: &BTreeSet<String>, right: &BTreeSet<String>) -> b
     })
 }
 
-fn condition_assignments(conditions: &BTreeSet<String>) -> Option<BTreeMap<String, String>> {
+fn conditions_negate_each_other(left: &BTreeSet<String>, right: &BTreeSet<String>) -> bool {
+    left.iter().any(|condition| {
+        condition
+            .strip_prefix("not-")
+            .is_some_and(|positive| right.contains(positive))
+            || right.contains(&format!("not-{condition}"))
+    })
+}
+
+fn container_ranges_conflict(left: &BTreeSet<String>, right: &BTreeSet<String>) -> bool {
+    let mut minimum = None::<f64>;
+    let mut maximum = None::<f64>;
+    for condition in left.iter().chain(right) {
+        let Some((bound, value)) = container_bound(condition) else {
+            continue;
+        };
+        if bound == "min" {
+            minimum = Some(minimum.map_or(value, |current| current.max(value)));
+        } else {
+            maximum = Some(maximum.map_or(value, |current| current.min(value)));
+        }
+    }
+    minimum.zip(maximum).is_some_and(|(min, max)| min >= max)
+}
+
+fn container_bound(condition: &str) -> Option<(&'static str, f64)> {
+    let condition = condition.strip_prefix('@')?;
+    let (bound, name) = condition
+        .strip_prefix("max-")
+        .map_or(("min", condition), |name| ("max", name));
+    let value = match name {
+        "sm" => 640.0,
+        "md" => 768.0,
+        "lg" => 1024.0,
+        "xl" => 1280.0,
+        "2xl" => 1536.0,
+        _ => return None,
+    };
+    Some((bound, value))
+}
+
+fn condition_assignments(
+    conditions: &BTreeSet<String>,
+    variant_assignments: &BTreeMap<String, (String, String)>,
+) -> Option<BTreeMap<String, String>> {
     if conditions.contains("dark") && conditions.contains("light") {
         return None;
     }
     let mut assignments = BTreeMap::new();
-    for (property, value) in conditions
-        .iter()
-        .filter_map(|condition| condition_assignment(condition))
-    {
+    for (property, value) in conditions.iter().filter_map(|condition| {
+        condition_assignment(condition).or_else(|| variant_assignments.get(condition).cloned())
+    }) {
         if assignments
             .insert(property, value.clone())
             .is_some_and(|existing| existing != value)
@@ -1694,6 +1760,7 @@ pub fn scan_with_progress(
                 inline_style_bindings: BTreeMap::new(),
                 cva_bindings: BTreeMap::new(),
                 max_reachable_states: request.policy.max_reachable_states,
+                variant_assignments: &request.policy.variant_assignments,
                 semantic_class_signals: &request.policy.semantic_class_signals,
                 semantic_class_structures: &request.policy.semantic_class_structures,
                 semantic_card_classes: &request.policy.semantic_card_classes,
@@ -1847,6 +1914,14 @@ pub fn scan_with_progress(
         root: root.to_string_lossy().into_owned(),
         findings,
         owners,
+        render_edges: render_edges
+            .into_iter()
+            .map(|edge| AnalyzedRenderEdge {
+                path: edge.parent_path,
+                parent_owner: edge.parent_owner,
+                child_name: edge.child_owner,
+            })
+            .collect(),
         coverage,
         resource_usage,
     })

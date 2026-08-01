@@ -100,7 +100,7 @@ fn version_init_and_action_expose_the_final_operational_contract() {
         .output()
         .expect("version command");
     let version = String::from_utf8(version.stdout).expect("version UTF-8");
-    assert!(version.contains("ai-ui-slop 0.12.0"));
+    assert!(version.contains("ai-ui-slop 0.13.0"));
     assert!(version.contains("report-schema 7"));
 
     let temporary = tempfile::tempdir().expect("temporary repository");

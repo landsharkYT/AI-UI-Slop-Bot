@@ -1,7 +1,7 @@
 # Requirements Verification Matrix
 
-Source: `requirements.md` SHA-256 `08b151cf56512041b93899527bd351ba2a9a63ff5d42c8be6e4f71e34724df0d`
-Generated rows: 390
+Source: `requirements.md` SHA-256 `ca8a2c114f9791e6c052462b3c8a2223e23ca33a18ef5581a0bcd1976b619d16`
+Generated rows: 395
 
 Every evidence record is pending until the named verification runs and the durable record links its raw fixtures, logs, labels, benchmark output, or release artifacts. Shared evidence may cover several requirements only when it cites every covered ID.
 
@@ -118,6 +118,11 @@ Every evidence record is pending until the named verification runs and the durab
 | `MILESTONE-002` | Discovery Prototype | Milestone scope review | `docs/evidence/MILESTONE-002.md` | Discovery Prototype (not a release): Prove the highest-risk technical and product hypotheses with the Repeated Decorative Shell rule on r... | pending |
 | `MILESTONE-003` | Validated MVP | Milestone scope review | `docs/evidence/MILESTONE-003.md` | Validated MVP (first usable release): Deliver a whole-repository local advisory scanner with Repeated Decorative Shell and Effect Stackin... | pending |
 | `MILESTONE-004` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-004.md` | Full V1: Deliver the complete eleven-rule pack, all built-in Page Archetypes plus safe generic fallback and taxonomy extension, all specifi... | pending |
+| `MILESTONE-005` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-005.md` | The V1 feature boundary is bounded, non-executing static analysis; unsupported forms remain visible as unresolved coverage. | pending |
+| `MILESTONE-006` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-006.md` | A locally verified bounded implementation is a V1 Implementation Candidate until all mandatory Full V1 release gates pass. | pending |
+| `MILESTONE-007` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-007.md` | Four bounded static-analysis gaps are V1 Implementation Blockers rather than post-V1 enhancements. | local-pass |
+| `MILESTONE-008` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-008.md` | The V1 scope ledger authoritatively separates blockers, release gates, post-V1 candidates, and product non-goals. | pending |
+| `MILESTONE-009` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-009.md` | Advisory Use-Case Trials may begin before blocker closure but cannot enforce policy or imply V1 qualification. | pending |
 | `MODEL-001` | Validated MVP | Schema and domain-model review | `docs/evidence/MODEL-001.md linking test or fixture manifest keyed by MODEL-001` | An Analysis Scope is the outermost scoring boundary. Cross-scope summaries shall preserve the separate scores rather than produce a blend... | pending |
 | `MODEL-002` | Validated MVP | Schema and domain-model review | `docs/evidence/MODEL-002.md linking test or fixture manifest keyed by MODEL-002` | A repository-wide aggregate shall not erase component-level evidence or produce an unactionable universal quality grade. | pending |
 | `MVP-AC-001` | Validated MVP | Validated MVP release-gate evidence | `docs/evidence/MVP-AC-001.md` | Scan a representative repository containing .jsx and .tsx files as a local advisory tool. | pending |
