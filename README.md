@@ -6,6 +6,8 @@ The current build is a **V1 Implementation Candidate** (`0.14.0`, rule pack `1.0
 
 Advisory use-case testing may begin now. Keep enforcement disabled until the applicable Full V1 gates pass, record scanner and rule-pack versions, and preserve every reported coverage limitation.
 
+Upgrading an existing checkout requires a reviewed semantic migration. See [Migrating from 0.13 to 0.14](docs/migrations/0.13-to-0.14.md) before replacing reports or a Reviewed Baseline.
+
 ## Build
 
 Rust 1.96 or newer is the currently verified toolchain.
