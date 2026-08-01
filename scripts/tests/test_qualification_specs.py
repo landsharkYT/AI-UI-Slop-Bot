@@ -44,6 +44,19 @@ class QualificationSpecsTest(unittest.TestCase):
         self.assertIn("rulePackVersion", runner["requiredEvidence"])
         self.assertIn("peakRssKiB", runner["requiredEvidence"])
 
+    def test_hosted_workflows_validate_evidence_before_publication(self) -> None:
+        qualification = (ROOT / ".github/workflows/qualification.yml").read_text(
+            encoding="utf-8"
+        )
+        release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("qualification-program.py reference", qualification)
+        self.assertIn("qualification-program.py progress", qualification)
+        self.assertIn("workflow_dispatch:", release)
+        self.assertIn("native-smoke.py", release)
+        self.assertIn("qualification-program.py native", release)
+        self.assertIn("if: github.ref_type == 'tag'", release)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,13 +40,18 @@ jobs:
         run: |
           cargo build --locked --release
           scripts/benchmark.sh target/release/ai-ui-slop target/qualification/benchmark
+          scripts/qualification-program.py reference \
+            target/qualification/benchmark/benchmark.json \
+            --output target/qualification/reference-decision.json
       - name: Progress overhead gate
         if: inputs.gate == 'progress'
         run: |
           cargo build --locked --release
           scripts/progress-trial.py target/release/ai-ui-slop \
             tests/fixtures/recurring-shell target/qualification/progress.json
-          python3 -c 'import json; from pathlib import Path; assert json.loads(Path("target/qualification/progress.json").read_text())["passesTwoPercentMedianGate"]'
+          scripts/qualification-program.py progress \
+            target/qualification/progress.json \
+            --output target/qualification/progress-decision.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

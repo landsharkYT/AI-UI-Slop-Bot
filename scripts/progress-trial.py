@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
 import json
+import os
 import statistics
 import subprocess
 import sys
@@ -77,8 +78,30 @@ with tempfile.TemporaryDirectory() as directory:
 deltas = sorted(pair["deltaPercent"] for pair in pairs)
 lower = deltas[max(0, int(len(deltas) * 0.025) - 1)]
 upper = deltas[min(len(deltas) - 1, int(len(deltas) * 0.975))]
+version = subprocess.run(
+    [str(binary), "version"], check=False, capture_output=True, text=True
+)
+version_lines = version.stdout.splitlines()
+version_fields = dict(
+    line.split(" ", 1) for line in version_lines[1:] if " " in line
+)
+revision = subprocess.run(
+    ["git", "rev-parse", "HEAD"], check=False, capture_output=True, text=True
+).stdout.strip()
+resolved_image = os.environ.get("ImageVersion", "local-unqualified")
 evidence = {
     "protocolVersion": "1",
+    "runnerId": (
+        "github-ubuntu-24.04-x64-v1"
+        if resolved_image != "local-unqualified"
+        else "local-unqualified"
+    ),
+    "resolvedImageVersion": resolved_image,
+    "logicalProcessors": os.cpu_count(),
+    "scannerRevision": revision or "unknown",
+    "scannerVersion": version_lines[0] if version_lines else "unknown",
+    "rulePackVersion": version_fields.get("rule-pack", "unknown"),
+    "fixtureVersion": "2",
     "pairs": pairs,
     "medianPairedOverheadPercent": statistics.median(deltas),
     "empirical95PercentInterval": [lower, upper],

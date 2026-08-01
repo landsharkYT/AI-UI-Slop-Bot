@@ -2,7 +2,7 @@
 
 AI UI Slop Bot is an evidence-first Rust analyzer for repeated, context-insensitive frontend aesthetics: interchangeable landing-page formulas, excessive card shells, stock framework recipes, effect stacking, and the “everything has the same compact border” treatment.
 
-The current build is a **V1 Implementation Candidate** (`0.13.0`, rule pack `1.0.0-beta.7`). It is useful for design-review trials, not an objective taste oracle. The bounded V1 feature surface is locally implemented; customer calibration, hosted-platform qualification, reference-runner performance and test-quality evidence, and authenticated release validation remain before Full V1. See the [support matrix](docs/support-matrix.md).
+The current build is a **V1 Implementation Candidate** (`0.13.0`, rule pack `1.0.0-beta.7`). It is useful for design-review trials, not an objective taste oracle. The bounded V1 feature surface and provisional mutation gate are locally qualified; customer calibration, hosted-platform qualification, reference-runner performance, and authenticated release validation remain before Full V1. See the [support matrix](docs/support-matrix.md).
 
 Advisory use-case testing may begin now. Keep enforcement disabled until the applicable Full V1 gates pass, record scanner and rule-pack versions, and preserve every reported coverage limitation.
 
@@ -179,7 +179,7 @@ scripts/fuzz-smoke.py --iterations 128
 
 The public-seam tests cover discovery, graph and route adapters, static style resolution, rule boundaries, coverage and resource ceilings, hostile inputs, baselines, deterministic parallel execution, CLI lifecycles, progress, and report artifacts.
 
-Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, and evidence order are in [qualification/README.md](qualification/README.md). Qualification Shot 2 completed the local TEST-004 mutation gate at 80.6311%; see [the Shot 2 record](docs/evidence/QUALIFICATION-SHOT-2.md). A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
+Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, evidence order, and fail-closed hosted validators are in the [qualification program](qualification/program.md). Qualification Shot 2 completed the local TEST-004 mutation gate at 80.6311%; Qualification Shot 3 wired reference, progress, and five-target native decisions without promoting local rehearsal data. A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
 
 ### Build-disk maintenance
 

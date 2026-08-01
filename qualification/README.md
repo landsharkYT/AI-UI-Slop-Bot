@@ -2,7 +2,7 @@
 
 This directory freezes the release-decision rules before external outcomes are known. It does not contain fabricated customer evidence and does not make the current Implementation Candidate a Full V1 release.
 
-The implementation and local rehearsal records for this harness are [Qualification Shot 1](../docs/evidence/QUALIFICATION-SHOT-1.md) and [Qualification Shot 2](../docs/evidence/QUALIFICATION-SHOT-2.md). The completed local mutation gate is recorded under [TEST-004](../docs/evidence/TEST-004.md).
+The implementation and local rehearsal records for this harness are [Qualification Shot 1](../docs/evidence/QUALIFICATION-SHOT-1.md), [Qualification Shot 2](../docs/evidence/QUALIFICATION-SHOT-2.md), and [Qualification Shot 3](../docs/evidence/QUALIFICATION-SHOT-3.md). The completed local mutation gate is recorded under [TEST-004](../docs/evidence/TEST-004.md). The end-to-end execution and promotion sequence is the [Full V1 qualification program](program.md).
 
 `protocol.json` is the machine-readable gate contract. `reference-runner.json` fixes the runner class, CPU allocation policy, and evidence fields. The two trial protocols fix ordering, blinding, forms, and failure treatment.
 
@@ -26,6 +26,14 @@ cargo mutants --no-shuffle --output target/qualification/mutants \
   --file src/app.rs --file src/baseline.rs --file src/policy.rs --file src/style.rs
 scripts/mutation-score.py target/qualification/mutants \
   --output target/qualification/mutation-score.json
+scripts/qualification-program.py reference \
+  target/qualification/benchmark/benchmark.json \
+  --output target/qualification/reference-decision.json
+scripts/qualification-program.py progress \
+  target/qualification/progress.json \
+  --output target/qualification/progress-decision.json
+scripts/qualification-program.py native target/qualification/native \
+  --output target/qualification/native-decision.json
 ```
 
 Timeouts count as viable mutants that were not caught. Unviable mutants are reported but excluded from the score. Surviving mutants require substantive review; suppressing them merely to reach 80% is not qualification. The scorer also rejects incomplete runs and output accumulated with `cargo mutants --iterate`; qualification evidence must come from one complete run.
