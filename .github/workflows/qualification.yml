@@ -1,0 +1,55 @@
+name: Manual Full V1 qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      gate:
+        description: Qualification gate to exercise
+        required: true
+        type: choice
+        options: [mutation, reference-benchmark, progress]
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.96.0 --profile minimal --component clippy --component rustfmt
+      - run: rustup show active-toolchain
+      - run: cargo test --locked --all-targets --all-features
+      - name: Mutation gate
+        if: inputs.gate == 'mutation'
+        run: |
+          cargo install --locked --version 27.0.0 cargo-mutants
+          set +e
+          cargo mutants --no-shuffle --output target/qualification/mutants \
+            --file src/app.rs --file src/baseline.rs --file src/policy.rs --file src/style.rs
+          mutants_status="$?"
+          set -e
+          test "$mutants_status" = 0 -o "$mutants_status" = 2 -o "$mutants_status" = 3
+          scripts/mutation-score.py target/qualification/mutants \
+            --output target/qualification/mutation-score.json
+      - name: Reference benchmark gate
+        if: inputs.gate == 'reference-benchmark'
+        run: |
+          cargo build --locked --release
+          scripts/benchmark.sh target/release/ai-ui-slop target/qualification/benchmark
+      - name: Progress overhead gate
+        if: inputs.gate == 'progress'
+        run: |
+          cargo build --locked --release
+          scripts/progress-trial.py target/release/ai-ui-slop \
+            tests/fixtures/recurring-shell target/qualification/progress.json
+          python3 -c 'import json; from pathlib import Path; assert json.loads(Path("target/qualification/progress.json").read_text())["passesTwoPercentMedianGate"]'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualification-${{ inputs.gate }}-${{ github.sha }}
+          path: target/qualification/
+          if-no-files-found: warn

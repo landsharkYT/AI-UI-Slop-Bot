@@ -1,4 +1,6 @@
 /target/
+/mutants.out*
+__pycache__/
 /.ai-ui-slop/
 /.opencode/
 /gemini.pdf

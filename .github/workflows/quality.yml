@@ -1,0 +1,32 @@
+name: Local qualification seams
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.96.0 --profile minimal --component clippy --component rustfmt
+      - run: rustup show active-toolchain
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --all-targets --all-features
+      - run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - run: python3 scripts/audit-requirements.py
+      - run: scripts/audit-qualification.py --format json
+      - run: cargo build --locked
+      - run: scripts/fuzz-smoke.py --iterations 128
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-smoke
+          path: target/qualification/fuzz-smoke.json
+          if-no-files-found: error

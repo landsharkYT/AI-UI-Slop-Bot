@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "1",
+  "status": "frozen-for-v1-qualification",
+  "rules": {
+    "ids": [
+      "repeated-decorative-shell",
+      "template-convergence",
+      "effect-stacking",
+      "decoration-saturation",
+      "shape-homogenization",
+      "cardification",
+      "generic-container-depth",
+      "design-token-drift",
+      "rhythm-homogenization",
+      "framework-default-convergence",
+      "control-surface-homogenization"
+    ],
+    "holdoutPerRule": {
+      "minimumAcceptableCounterexamples": 20,
+      "minimumDesignFamilies": 4,
+      "minimumPositiveCases": 20,
+      "minimumRepositories": 8,
+      "maximumPolarityShareFromOneRepository": 0.25
+    },
+    "minimumPerRule": {
+      "briefActionability": 0.8,
+      "precision": 0.9,
+      "recall": 0.8,
+      "usefulYield": 0.7
+    },
+    "operatingPoint": {
+      "confidence": "high",
+      "dispositions": ["report", "enforce"],
+      "minimumBand": "moderate",
+      "ruleEnabledByDefault": true,
+      "suppressed": false
+    }
+  },
+  "archetypes": {
+    "ids": [
+      "marketing",
+      "dashboard",
+      "authentication",
+      "onboarding",
+      "settings",
+      "pricing",
+      "commerce",
+      "portfolio",
+      "content",
+      "administration",
+      "search",
+      "social",
+      "workflow",
+      "status"
+    ],
+    "minimumAcceptableCounterexamplesPerArchetype": 10,
+    "minimumPositiveCasesPerArchetype": 10,
+    "minimumRepositoriesPerPolarity": 3,
+    "unknownAndCustomBlindSetRequired": true
+  },
+  "maintainerTrial": {
+    "externalReactMaintainers": 7,
+    "minimumAllThreePositiveRatings": 5,
+    "minimumLocalFirstUseParticipants": 4,
+    "minimumLocalFirstUseSuccesses": 3,
+    "timeToUsefulFindingAndTriageMinutes": 15,
+    "requiredRatings": ["accurate", "actionable", "worth-using"]
+  },
+  "agentTrial": {
+    "minimumFreshTrials": 10,
+    "minimumModelFamilies": 2,
+    "minimumPassingTrials": 8,
+    "minimumBlindedExternalReviewsPerPair": 3,
+    "minimumReviewerPreference": 0.6666666667,
+    "materialCorrectivePromptFailsTrial": true
+  },
+  "automatedQualification": {
+    "minimumMutationScorePercent": 80,
+    "performance": {
+      "coldWorkloads": [
+        {"id": "representative-files", "minimumFiles": 2000},
+        {"id": "representative-lines", "minimumLines": 500000}
+      ],
+      "maximumElapsedSecondsPerWorkload": 60,
+      "maximumPeakMemoryBytesPerWorkload": 1610612736,
+      "persistentCacheAllowed": false
+    },
+    "progress": {
+      "alternatingColdPairs": 20,
+      "maximumMedianPairedOverhead": 0.02,
+      "confidenceInterval": 0.95,
+      "reportAndOutcomeEquivalenceRequired": true
+    },
+    "nativeTargets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc"
+    ]
+  }
+}

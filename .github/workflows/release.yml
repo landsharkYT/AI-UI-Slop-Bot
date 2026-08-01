@@ -40,6 +40,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal
+
       - name: Install pinned Rust target
         run: rustup target add ${{ matrix.target }}
 

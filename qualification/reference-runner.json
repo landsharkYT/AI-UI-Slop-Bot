@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1",
+  "runnerId": "github-ubuntu-24.04-x64-v1",
+  "status": "frozen-for-v1-qualification",
+  "provider": "github-actions",
+  "runnerLabel": "ubuntu-24.04",
+  "architecture": "x86_64",
+  "cpuAllocation": {
+    "logicalProcessors": 4,
+    "policy": "use the complete standard public-repository runner allocation; do not run concurrent jobs"
+  },
+  "imagePinning": {
+    "selection": "the GitHub runner image selected by ubuntu-24.04",
+    "resolvedIdentityEnvironmentVariable": "ImageVersion",
+    "rule": "record the resolved ImageVersion with each run; reruns for one release decision must use the same resolved image version"
+  },
+  "toolchain": {
+    "source": "rust-toolchain.toml",
+    "cargoLocked": true
+  },
+  "filesystem": {
+    "persistentAnalysisCache": false,
+    "freshFixtureDirectoryPerWorkload": true
+  },
+  "requiredEvidence": [
+    "runnerId",
+    "resolvedImageVersion",
+    "osRelease",
+    "kernel",
+    "cpuModel",
+    "logicalProcessors",
+    "memoryBytes",
+    "rustcVersion",
+    "cargoVersion",
+    "scannerRevision",
+    "scannerVersion",
+    "rulePackVersion",
+    "scannerOptions",
+    "fixtureVersion",
+    "fileCount",
+    "lineCount",
+    "elapsedMilliseconds",
+    "peakRssKiB"
+  ]
+}
