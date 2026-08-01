@@ -319,6 +319,70 @@ fn style_adapter_honors_exact_file_byte_ceiling_and_reports_the_first_excess_byt
 }
 
 #[test]
+fn style_adapter_honors_the_exact_total_byte_ceiling_across_css_imports() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    let entrypoint = "@import \"./nested.css\";";
+    let nested = ".shell{border-radius:32px}";
+    fs::write(repository.path().join("styles.css"), entrypoint).expect("entrypoint stylesheet");
+    fs::write(repository.path().join("nested.css"), nested).expect("imported stylesheet");
+    fs::write(
+        repository.path().join("App.tsx"),
+        "import './styles.css'; export function App(){return <main className=\"shell\">App</main>}",
+    )
+    .expect("entrypoint");
+
+    let total = entrypoint.len() + nested.len();
+    let write_config = |maximum: usize| {
+        fs::write(
+            repository.path().join("ai-ui-slop.config.jsonc"),
+            format!(
+                r#"{{"schemaVersion":"1","tailwindVersion":"4","resources":{{"maxAuxiliaryBytes":{maximum}}}}}"#
+            ),
+        )
+        .expect("configuration");
+    };
+
+    write_config(total);
+    let exact = analyze_repository(RepositoryRequest::new(repository.path())).expect("analysis");
+    let adapter = &exact.scopes[0].style_adapter;
+    assert_eq!(adapter.configuration_bytes, total as u64);
+    assert!(adapter.sources.contains(&"styles.css".to_owned()));
+    assert!(adapter.sources.contains(&"nested.css".to_owned()));
+    assert!(adapter.unresolved.is_empty(), "{:#?}", adapter.unresolved);
+
+    write_config(total - 1);
+    let excess = analyze_repository(RepositoryRequest::new(repository.path())).expect("analysis");
+    let adapter = &excess.scopes[0].style_adapter;
+    assert_eq!(adapter.configuration_bytes, entrypoint.len() as u64);
+    assert!(adapter.sources.contains(&"styles.css".to_owned()));
+    assert!(!adapter.sources.contains(&"nested.css".to_owned()));
+    assert!(adapter.unresolved.iter().any(|message| {
+        message.contains("nested.css") && message.contains("maxAuxiliaryBytes")
+    }));
+
+    write_config(entrypoint.len());
+    let entrypoint_exact =
+        analyze_repository(RepositoryRequest::new(repository.path())).expect("analysis");
+    let adapter = &entrypoint_exact.scopes[0].style_adapter;
+    assert_eq!(adapter.configuration_bytes, entrypoint.len() as u64);
+    assert!(adapter.sources.contains(&"styles.css".to_owned()));
+    assert!(!adapter.sources.contains(&"nested.css".to_owned()));
+    assert!(adapter.unresolved.iter().any(|message| {
+        message.contains("nested.css") && message.contains("maxAuxiliaryBytes")
+    }));
+
+    write_config(entrypoint.len() - 1);
+    let entrypoint_excess =
+        analyze_repository(RepositoryRequest::new(repository.path())).expect("analysis");
+    let adapter = &entrypoint_excess.scopes[0].style_adapter;
+    assert_eq!(adapter.configuration_bytes, 0);
+    assert!(!adapter.sources.contains(&"styles.css".to_owned()));
+    assert!(adapter.unresolved.iter().any(|message| {
+        message.contains("styles.css") && message.contains("maxAuxiliaryBytes")
+    }));
+}
+
+#[test]
 fn configured_and_detected_tailwind_versions_must_agree() {
     let repository = tempfile::tempdir().expect("temporary repository");
     fs::write(
