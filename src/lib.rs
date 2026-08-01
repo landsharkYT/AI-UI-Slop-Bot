@@ -752,7 +752,8 @@ impl<'a> CandidateVisitor<'a> {
             BTreeMap::new(),
             call.span.start,
             snippet,
-            has_children
+            self.dialog_depth == 0
+                && has_children
                 && !matches!(
                     tag.as_str(),
                     "button" | "input" | "select" | "textarea" | "option" | "label"
@@ -761,6 +762,32 @@ impl<'a> CandidateVisitor<'a> {
             0,
         );
     }
+}
+
+fn is_supported_runtime_factory(call: &CallExpression<'_>) -> bool {
+    matches!(
+        &call.callee,
+        Expression::Identifier(identifier)
+            if matches!(identifier.name.as_str(), "createElement" | "_jsx" | "_jsxs" | "jsx" | "jsxs")
+    ) || call.callee.as_member_expression().is_some_and(|member| {
+        member.static_property_name().as_deref() == Some("createElement")
+            && matches!(
+                member.object(),
+                Expression::Identifier(identifier) if identifier.name == "React"
+            )
+    })
+}
+
+fn static_runtime_role(call: &CallExpression<'_>) -> Option<String> {
+    if !is_supported_runtime_factory(call) {
+        return None;
+    }
+    call.arguments
+        .get(1)?
+        .as_expression()
+        .and_then(as_object_expression)
+        .and_then(|props| object_expression_property(props, "role"))
+        .and_then(static_selector_value)
 }
 
 fn expression_static_name(expression: &Expression<'_>) -> Option<String> {
@@ -1514,8 +1541,16 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
     }
 
     fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+        let dialog = static_runtime_role(call)
+            .is_some_and(|role| matches!(role.as_str(), "dialog" | "alertdialog"));
+        if dialog {
+            self.dialog_depth += 1;
+        }
         self.inspect_runtime_element(call);
         walk_call_expression(self, call);
+        if dialog {
+            self.dialog_depth = self.dialog_depth.saturating_sub(1);
+        }
     }
 
     fn visit_jsx_element(&mut self, element: &JSXElement<'a>) {

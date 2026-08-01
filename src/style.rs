@@ -723,19 +723,19 @@ fn collect_plain_css_semantic_classes(
         if header.starts_with('@') {
             let supported_tailwind_block =
                 header.starts_with("@theme") || header.starts_with("@utility");
-            if !supported_tailwind_block && has_semantics {
+            if !supported_tailwind_block
+                && (has_semantics || has_supported_plain_css_declarations(body))
+            {
                 outcome.unresolved_selectors = true;
             }
         } else if has_semantics || has_supported_plain_css_declarations(body) {
             for selector in header.split(',').map(str::trim) {
                 if let Some((name, pseudo_element)) = simple_css_class_name(selector) {
                     if pseudo_element {
-                        if generated_pseudo_element(body) {
-                            let declarations =
-                                generated_declarations.entry(name.to_owned()).or_default();
-                            declarations.push_str(body);
-                            declarations.push(';');
-                        }
+                        let declarations =
+                            generated_declarations.entry(name.to_owned()).or_default();
+                        declarations.push_str(body);
+                        declarations.push(';');
                     } else {
                         outcome.resolved_classes.insert(name.to_owned());
                         let declarations = base_declarations.entry(name.to_owned()).or_default();
@@ -772,6 +772,9 @@ fn collect_plain_css_semantic_classes(
         }
     }
     for (name, body) in generated_declarations {
+        if !generated_pseudo_element(&body) {
+            continue;
+        }
         let (signals, unresolved_variables) =
             classify_plain_css_declarations(&body, custom_properties);
         outcome.unresolved_variables |= unresolved_variables;
@@ -792,21 +795,27 @@ fn merge_semantic_maps(
 }
 
 fn has_supported_plain_css_declarations(body: &str) -> bool {
-    body.split(';').any(|declaration| {
-        declaration.split_once(':').is_some_and(|(property, _)| {
-            matches!(
-                property.trim().to_ascii_lowercase().as_str(),
-                "border-radius"
-                    | "box-shadow"
-                    | "background"
-                    | "background-color"
-                    | "background-image"
-                    | "padding"
-                    | "border"
-                    | "font-size"
-                    | "letter-spacing"
-                    | "text-transform"
-            )
+    let body = body.to_ascii_lowercase();
+    [
+        "border-radius",
+        "box-shadow",
+        "background",
+        "background-color",
+        "background-image",
+        "padding",
+        "border",
+        "font-size",
+        "letter-spacing",
+        "text-transform",
+    ]
+    .iter()
+    .any(|property| {
+        body.match_indices(property).any(|(index, _)| {
+            let before = body[..index].chars().next_back();
+            let after = body[index + property.len()..].trim_start();
+            before.is_none_or(|character| {
+                !character.is_ascii_alphanumeric() && !matches!(character, '-' | '_')
+            }) && after.starts_with(':')
         })
     })
 }
@@ -1098,15 +1107,14 @@ fn simple_css_class_name(selector: &str) -> Option<(&str, bool)> {
 }
 
 fn generated_pseudo_element(body: &str) -> bool {
-    body.split(';').any(|declaration| {
-        declaration
-            .split_once(':')
-            .is_some_and(|(property, value)| {
-                property.trim() == "content"
-                    && !matches!(value.trim(), "" | "none" | "normal" | "var()")
-                    && !value.trim().starts_with("var(")
-            })
-    })
+    body.split(';')
+        .filter_map(|declaration| declaration.split_once(':'))
+        .filter(|(property, _)| property.trim() == "content")
+        .map(|(_, value)| value.trim())
+        .next_back()
+        .is_some_and(|value| {
+            !matches!(value, "" | "none" | "normal" | "var()") && !value.starts_with("var(")
+        })
 }
 
 fn strip_css_comments(source: &str) -> String {

@@ -40,6 +40,78 @@ export function GradientReset(){return <main>
 }
 
 #[test]
+fn pseudo_element_resets_and_conditional_resets_are_handled_conservatively() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    fs::write(
+        repository.path().join("styles.css"),
+        r#"
+.page-card { padding: 2rem; border-radius: 2rem; box-shadow: 0 24px 48px #000; }
+.page-card::before { content: ""; background: linear-gradient(#fff2, transparent); }
+.page-card::before { content: none; background: none; }
+@media (min-width: 60rem) { .page-card { box-shadow: none; } }
+"#,
+    )
+    .expect("stylesheet");
+    fs::write(
+        repository.path().join("PseudoReset.tsx"),
+        r#"
+import "./styles.css";
+export function Alpha(){return <section className="page-card">Alpha</section>}
+export function Beta(){return <section className="page-card">Beta</section>}
+export function Gamma(){return <section className="page-card">Gamma</section>}
+"#,
+    )
+    .expect("source");
+
+    let report = analyze_repository(RepositoryRequest::new(repository.path())).expect("analysis");
+    let scope = &report.scopes[0];
+    assert!(scope.findings.iter().all(|finding| {
+        !finding
+            .evidence
+            .iter()
+            .any(|evidence| evidence.signal_id == "gradient-surface")
+    }));
+    assert_eq!(scope.status, "incomplete");
+    assert!(
+        scope
+            .style_adapter
+            .unresolved
+            .iter()
+            .any(|detail| { detail.contains("conditional or compound plain CSS") })
+    );
+}
+
+#[test]
+fn runtime_dialog_descendants_do_not_supply_persistent_decoration_evidence() {
+    let repository = tempfile::tempdir().expect("temporary repository");
+    fs::write(
+        repository.path().join("styles.css"),
+        ".dialog { padding: 2rem; border-radius: 2rem; background: #111; } .loud { box-shadow: 0 24px 48px #000; }",
+    )
+    .expect("stylesheet");
+    fs::write(
+        repository.path().join("RuntimeDialog.tsx"),
+        r#"
+import React from "react";
+import "./styles.css";
+export function RuntimeDialog(){return React.createElement("div", { role: "dialog", className: "dialog" },
+  React.createElement("section", { className: "loud" }, "One"),
+  React.createElement("section", { className: "loud" }, "Two"),
+  React.createElement("section", { className: "loud" }, "Three"),
+  React.createElement("section", { className: "loud" }, "Four"))}
+"#,
+    )
+    .expect("source");
+
+    let report = analyze_repository(RepositoryRequest::new(repository.path())).expect("analysis");
+    assert!(
+        report.scopes[0].findings.is_empty(),
+        "{:#?}",
+        report.scopes[0].findings
+    );
+}
+
+#[test]
 fn resolved_css_cascade_and_structural_regions_do_not_create_rag_style_false_positives() {
     let repository = tempfile::tempdir().expect("temporary repository");
     fs::write(
