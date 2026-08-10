@@ -43,7 +43,7 @@ fn ast_memory_and_diagnostic_budgets_are_canonical_coverage_loss() {
         .expect("resource exhaustion still yields a report");
     let scope = &report.scopes[0];
 
-    assert_eq!(report.schema_version, "8");
+    assert_eq!(report.schema_version, "9");
     assert_eq!(scope.status, "incomplete");
     assert!(scope.resource_usage.ast_nodes_seen > 1);
     assert!(scope.resource_usage.parser_arena_peak_bytes > 0);
@@ -100,8 +100,8 @@ fn version_init_and_action_expose_the_final_operational_contract() {
         .output()
         .expect("version command");
     let version = String::from_utf8(version.stdout).expect("version UTF-8");
-    assert!(version.contains("ai-ui-slop 0.14.0"));
-    assert!(version.contains("report-schema 8"));
+    assert!(version.contains("ai-ui-slop 0.15.0"));
+    assert!(version.contains("report-schema 9"));
 
     let temporary = tempfile::tempdir().expect("temporary repository");
     let init = Command::new(binary())

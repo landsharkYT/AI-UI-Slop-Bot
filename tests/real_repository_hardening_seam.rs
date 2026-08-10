@@ -373,7 +373,7 @@ export function App() {
 }
 
 #[test]
-fn conditional_plain_css_is_coverage_loss_without_impossible_default_findings() {
+fn conditional_plain_css_is_a_bounded_limitation_without_impossible_default_findings() {
     let repository = tempfile::tempdir().expect("temporary repository");
     fs::write(
         repository.path().join("styles.css"),
@@ -411,5 +411,5 @@ export function Gamma(){return <aside className="responsive-shell">Gamma</aside>
                 .detail
                 .contains("conditional or compound plain CSS")
     }));
-    assert_eq!(scope.status, "incomplete");
+    assert_eq!(scope.status, "complete");
 }

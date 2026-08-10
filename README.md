@@ -2,11 +2,11 @@
 
 AI UI Slop Bot is an evidence-first Rust analyzer for repeated, context-insensitive frontend aesthetics: interchangeable landing-page formulas, excessive card shells, stock framework recipes, effect stacking, and the “everything has the same compact border” treatment.
 
-The current build is a **V1 Implementation Candidate** (`0.14.0`, rule pack `1.0.0-beta.8`). It is useful for design-review trials, not an objective taste oracle. The bounded V1 feature surface and provisional mutation gate are locally qualified; customer calibration, hosted-platform qualification, reference-runner performance, and authenticated release validation remain before Full V1. See the [support matrix](docs/support-matrix.md).
+The current build is a **V1 Implementation Candidate** (`0.15.0`, rule pack `1.0.0-beta.9`). It is useful for design-review trials, not an objective taste oracle. Schema 9 distinguishes bounded limitations from blocking evidence loss, excludes test/mocking source roles by default, and resolves more finite style/component states. The bounded V1 feature surface and provisional mutation gate are locally qualified; customer calibration, hosted-platform qualification, reference-runner performance, and authenticated release validation remain before Full V1. See the [support matrix](docs/support-matrix.md).
 
 Advisory use-case testing may begin now. Keep enforcement disabled until the applicable Full V1 gates pass, record scanner and rule-pack versions, and preserve every reported coverage limitation.
 
-Upgrading an existing checkout requires a reviewed semantic migration. See [Migrating from 0.13 to 0.14](docs/migrations/0.13-to-0.14.md) before replacing reports or a Reviewed Baseline.
+Upgrading an existing checkout requires a reviewed semantic migration. Current users should follow [Migrating from 0.14 to 0.15](docs/migrations/0.14-to-0.15.md); the prior [0.13 to 0.14 guide](docs/migrations/0.13-to-0.14.md) remains available for older checkouts.
 
 ## Build
 
@@ -36,6 +36,7 @@ ai-ui-slop scan ./your-react-repository --format terminal --progress always
 - `houseStyle.intent`: briefly state what the product should feel like.
 - `houseStyle.approvedSignals`, `approvedValues`, and `approvedPrimitives`: record deliberate, reviewed design-system choices.
 - `classFunctions` and `componentWrappers`: add repository-specific static class combinators and transparent React wrappers.
+- `includeStories`: defaults to `false`; enable it only when Storybook modules are intended application evidence. Conventional tests, specs, mocks, and fixtures remain excluded.
 - `tailwindVersion`: leave `auto` only when the manifest, lockfile, or configuration identifies it correctly.
 - `resources`: keep the defaults initially; lower them only when a bounded CI environment requires it.
 
@@ -181,7 +182,7 @@ scripts/fuzz-smoke.py --iterations 128
 
 The public-seam tests cover discovery, graph and route adapters, static style resolution, rule boundaries, coverage and resource ceilings, hostile inputs, baselines, deterministic parallel execution, CLI lifecycles, progress, and report artifacts.
 
-Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, evidence order, and fail-closed hosted validators are in the [qualification program](qualification/program.md). The current `0.14.0` candidate passes the local TEST-004 mutation gate at 80.5497%; Qualification Shot 3 wired reference, progress, and five-target native decisions without promoting local rehearsal data. A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
+Full V1 qualification is deliberately separate from this local gate. The frozen sample sizes, human/agent trial rubrics, reference-runner contract, mutation command, evidence order, and fail-closed hosted validators are in the [qualification program](qualification/program.md). The `0.14.0` candidate passed the local TEST-004 mutation gate at 80.5497%; `0.15.0` is the coverage-correction candidate that must retain or improve that result. Qualification Shot 3 wired reference, progress, and five-target native decisions without promoting local rehearsal data. A release may claim Full V1 only when `scripts/audit-qualification.py --require-complete` passes against committed evidence; the command is expected to fail on the current Implementation Candidate.
 
 ### Build-disk maintenance
 

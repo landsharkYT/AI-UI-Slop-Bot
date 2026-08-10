@@ -28,6 +28,30 @@ _Avoid_: Severity, AI probability
 The measured completeness vector for parsing eligible source bytes, resolving candidate style expressions, resolving supported local component edges, and resolving detected route declarations. Each dimension exposes its numerator, denominator, exclusions, and unresolved reasons; the dimensions are never collapsed into one percentage and remain distinct from Finding Confidence or absence of Findings.
 _Avoid_: Confidence, clean score, overall coverage percentage
 
+**Style Resolution Unit**:
+A reachable `className` or `style` expression whose rule-relevant visual evidence can be evaluated as one unit for style-resolution coverage. Stylesheet uncertainty is attributed to the units it can affect rather than to an unrelated file or the whole Analysis Scope.
+_Avoid_: CSS rule count, stylesheet coverage, utility count
+
+**Rule-Relevant Style Property**:
+A style property that can supply, suppress, or materially alter a Slop Signal consumed by an active rule-pack rule. A runtime value outside that active vocabulary is resolved as irrelevant rather than counted as missing aesthetic evidence.
+_Avoid_: Any CSS property, supported syntax, dynamic style
+
+**Reachable Style State**:
+A statically possible combination of style values under compatible branch, variant, and selection conditions. Finite states preserve their conditions independently; an unbounded or excessively large state family becomes a Coverage Limitation rather than being guessed or merged.
+_Avoid_: Runtime snapshot, averaged style, arbitrary permutation
+
+**Coverage Limitation**:
+Measured, localized uncertainty in an otherwise usable analysis, retained as a warning and reflected in the affected coverage dimension or Finding Confidence without automatically making the review provisional.
+_Avoid_: Scan failure, clean result, ignored input
+
+**Blocking Coverage Loss**:
+Uncertainty that makes a review provisional because coverage falls below policy, its impact cannot be bounded, critical input is unavailable, or analysis cannot finish reliably.
+_Avoid_: Any unresolved construct, warning, finding
+
+**Coverage Diagnostic**:
+A structured explanation of one Analysis Coverage limitation or blocking loss, including its stable reason, affected source units, boundedness, rule relevance, and recovery guidance. It is evidence about analysis completeness rather than a Finding about the interface.
+_Avoid_: Finding, log message, generic warning
+
 **Policy Disposition**:
 The configured treatment of a Finding: report it, suppress it, or enforce it. Disposition expresses repository policy rather than convergence strength or analysis certainty.
 _Avoid_: Severity, importance
@@ -67,6 +91,18 @@ _Avoid_: Site score, quality grade
 **Analysis Scope**:
 A configured frontend application or workspace whose components share a House Style Profile, Repository Profile, and Reviewed Baseline. A monorepository may contain several independent Analysis Scopes that must not contaminate one another's scores.
 _Avoid_: Package, whole monorepo
+
+**Scope Draft**:
+An inferred candidate configuration produced for review when frontend application boundaries have not yet been declared. A Scope Draft may support an explicitly provisional Advisory Use-Case Trial but is not Trusted Policy and cannot authorize baselines or enforcement.
+_Avoid_: Analysis Scope, automatic policy, inferred truth
+
+**Source Role**:
+The declared or conventionally established purpose of source within an Analysis Scope, such as application, test, fixture, or story. Application source participates in default Findings and coverage; other roles require explicit inclusion or an independent scope.
+_Avoid_: File extension, route status, ignored file
+
+**Conditioned Ownership Set**:
+A finite set of local component owners that may be rendered at one site under statically distinguishable conditions. It preserves each possible owner and condition without pretending that the render target is unique or treating a bounded selection as opaque.
+_Avoid_: Ambiguous owner, guessed owner, one synthetic component
 
 **Refactoring Brief**:
 An ordered, agent-readable handoff that groups related Findings into coherent cleanup work while stating evidence, House Style constraints, Preservation Obligations, permitted discretion, and independent verification expectations. It directs work without supplying an automatic patch, replacement aesthetic, or runtime-equivalence guarantee.

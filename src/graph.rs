@@ -4,9 +4,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use oxc_allocator::Allocator;
+use oxc_parser::Parser;
+use oxc_span::SourceType;
 use serde::{Deserialize, Serialize};
 
-use crate::{AnalyzedOwner, AnalyzedRenderEdge, IgnoreRule, ignored_path, load_ignore_rules};
+use crate::{
+    AnalyzedModuleFact, AnalyzedOwner, AnalyzedRenderEdge, IgnoreRule, collect_module_fact,
+    ignored_path, is_application_source, load_ignore_rules,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,14 +58,43 @@ pub struct GraphRequest<'a> {
     pub ignore_policy_root: &'a Path,
     pub owners: &'a [AnalyzedOwner],
     pub render_edges: &'a [AnalyzedRenderEdge],
+    pub module_facts: &'a [AnalyzedModuleFact],
+    pub include_stories: bool,
     pub routes: &'a [(String, String, Vec<String>)],
     pub approved_primitives: &'a [(String, String)],
     pub max_edges: usize,
 }
 
 pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis, String> {
-    let files = discover_sources(request.root, request.ignore_policy_root)?;
+    let files = discover_sources(
+        request.root,
+        request.ignore_policy_root,
+        request.include_stories,
+    )?;
     let module_resolution = ModuleResolution::load(request.root)?;
+    let mut all_module_facts = request.module_facts.to_vec();
+    let supplied_paths = all_module_facts
+        .iter()
+        .map(|fact| fact.path.clone())
+        .collect::<BTreeSet<_>>();
+    for file in &files {
+        let relative = normalize_path(request.root, file);
+        if supplied_paths.contains(&relative) {
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(file) else {
+            continue;
+        };
+        let Ok(source_type) = SourceType::from_path(file) else {
+            continue;
+        };
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, &source, source_type).parse();
+        if parsed.diagnostics.is_empty() {
+            all_module_facts.push(collect_module_fact(&relative, &parsed.program));
+        }
+    }
+    all_module_facts.sort_by(|left, right| left.path.cmp(&right.path));
     let mut nodes = BTreeMap::<String, GraphNode>::new();
     let mut edges = BTreeSet::<GraphEdge>::new();
     let mut diagnostics = Vec::new();
@@ -83,7 +118,16 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
             .or_default()
             .push(id);
     }
-    let symbol_index = SymbolIndex::build(request.root, &files, request.owners, &module_resolution);
+    let module_facts = all_module_facts
+        .iter()
+        .map(|fact| (fact.path.as_str(), fact))
+        .collect::<BTreeMap<_, _>>();
+    let symbol_index = SymbolIndex::build(
+        request.root,
+        &all_module_facts,
+        request.owners,
+        &module_resolution,
+    );
 
     'files: for file in &files {
         let relative = normalize_path(request.root, file);
@@ -96,42 +140,45 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
                 path: Some(relative.clone()),
             },
         );
-        let source = match fs::read_to_string(file) {
-            Ok(source) => source,
-            Err(error) => {
-                diagnostics.push(GraphDiagnostic {
-                    reason: "graph-read-failure".to_owned(),
-                    path: relative,
-                    detail: error.to_string(),
-                });
-                continue;
-            }
+        let Some(fact) = module_facts.get(relative.as_str()) else {
+            continue;
         };
-
-        for module in extract_module_specifiers(&source) {
+        let mut module_specifiers = fact
+            .imports
+            .iter()
+            .map(|import| (import.specifier.clone(), import.dynamic))
+            .chain(
+                fact.star_exports
+                    .iter()
+                    .cloned()
+                    .map(|specifier| (specifier, false)),
+            )
+            .chain(
+                fact.exports
+                    .iter()
+                    .filter_map(|export| export.specifier.clone())
+                    .map(|specifier| (specifier, false)),
+            )
+            .collect::<Vec<_>>();
+        module_specifiers.sort();
+        module_specifiers.dedup();
+        for (specifier, dynamic) in module_specifiers {
             candidate_edges += 1;
-            let (target_id, resolved) = if module.dynamic {
+            let (target_id, resolved) = if dynamic {
                 (format!("unresolved:{}:dynamic-import", relative), false)
-            } else if module.specifier.starts_with('.') {
-                match resolve_module_candidate(
-                    file.parent().unwrap_or(request.root),
-                    &module.specifier,
-                ) {
+            } else if specifier.starts_with('.') {
+                match resolve_module_candidate(file.parent().unwrap_or(request.root), &specifier) {
                     Some(target) if target.starts_with(request.root) => {
                         let target_relative = normalize_path(request.root, &target);
                         (format!("file:{target_relative}"), true)
                     }
-                    _ => (
-                        format!("unresolved:{}:{}", relative, module.specifier),
-                        false,
-                    ),
+                    _ => (format!("unresolved:{}:{}", relative, specifier), false),
                 }
-            } else if let Some(target) = module_resolution.resolve(request.root, &module.specifier)
-            {
+            } else if let Some(target) = module_resolution.resolve(request.root, &specifier) {
                 let target_relative = normalize_path(request.root, &target);
                 (format!("file:{target_relative}"), true)
             } else {
-                (format!("package:{}", module.specifier), true)
+                (format!("package:{specifier}"), true)
             };
             if resolved {
                 resolved_edges += 1;
@@ -139,7 +186,7 @@ pub fn build_repository_graph(request: GraphRequest<'_>) -> Result<GraphAnalysis
                 diagnostics.push(GraphDiagnostic {
                     reason: "unresolved-import".to_owned(),
                     path: relative.clone(),
-                    detail: format!("could not statically resolve `{}`", module.specifier),
+                    detail: format!("could not statically resolve `{specifier}`"),
                 });
             }
             nodes.entry(target_id.clone()).or_insert(GraphNode {
@@ -318,7 +365,7 @@ struct SymbolIndex {
 impl SymbolIndex {
     fn build(
         root: &Path,
-        files: &[PathBuf],
+        module_facts: &[AnalyzedModuleFact],
         owners: &[AnalyzedOwner],
         module_resolution: &ModuleResolution,
     ) -> Self {
@@ -330,68 +377,45 @@ impl SymbolIndex {
                 .owners
                 .insert(owner.owner.clone());
         }
-        for path in files {
-            let relative = normalize_path(root, path);
-            let Ok(source) = fs::read_to_string(path) else {
-                continue;
-            };
+        for fact in module_facts {
+            let relative = fact.path.clone();
+            let path = root.join(&relative);
             let module = modules.entry(relative.clone()).or_default();
-            for statement in source.split(';').map(str::trim) {
-                if statement.starts_with("import ") {
-                    let Some((clause, specifier)) = import_clause(statement) else {
-                        continue;
-                    };
-                    let target = resolve_symbol_module(root, path, &specifier, module_resolution);
-                    for (imported, local) in named_bindings(&clause) {
-                        if let Some(target) = &target {
-                            module.imports.insert(local, (target.clone(), imported));
-                        } else if specifier.starts_with('.') {
-                            module.unresolved_imports.insert(local);
-                        } else {
-                            module.external_imports.insert(local);
-                        }
-                    }
-                    let default = clause.split(',').next().unwrap_or_default().trim();
-                    if !default.is_empty() && !default.starts_with('{') && !default.starts_with('*')
-                    {
+            for import in &fact.imports {
+                if !import.dynamic {
+                    let specifier = import.specifier.clone();
+                    let target = resolve_symbol_module(root, &path, &specifier, module_resolution);
+                    for (imported, local) in &import.bindings {
                         if let Some(target) = &target {
                             module
                                 .imports
-                                .insert(default.to_owned(), (target.clone(), "default".to_owned()));
+                                .insert(local.clone(), (target.clone(), imported.clone()));
                         } else if specifier.starts_with('.') {
-                            module.unresolved_imports.insert(default.to_owned());
+                            module.unresolved_imports.insert(local.clone());
                         } else {
-                            module.external_imports.insert(default.to_owned());
+                            module.external_imports.insert(local.clone());
                         }
                     }
-                } else if statement.starts_with("export * from ") {
-                    let Some(specifier) = first_quoted(statement) else {
-                        continue;
-                    };
-                    if let Some(target) =
-                        resolve_symbol_module(root, path, &specifier, module_resolution)
-                    {
-                        module.star_exports.push(target);
-                    }
-                } else if statement.starts_with("export {") {
-                    let Some(open) = statement.find('{') else {
-                        continue;
-                    };
-                    let Some(close) = statement[open + 1..].find('}').map(|at| open + 1 + at)
-                    else {
-                        continue;
-                    };
-                    let target = statement[close + 1..]
-                        .split_once(" from ")
-                        .and_then(|(_, source)| first_quoted(source))
-                        .and_then(|specifier| {
-                            resolve_symbol_module(root, path, &specifier, module_resolution)
-                        })
-                        .unwrap_or_else(|| relative.clone());
-                    for (local, exported) in named_bindings(&statement[open..=close]) {
-                        module.exports.insert(exported, (target.clone(), local));
-                    }
                 }
+            }
+            for specifier in &fact.star_exports {
+                if let Some(target) =
+                    resolve_symbol_module(root, &path, specifier, module_resolution)
+                {
+                    module.star_exports.push(target);
+                }
+            }
+            for export in &fact.exports {
+                let target = export
+                    .specifier
+                    .as_ref()
+                    .and_then(|specifier| {
+                        resolve_symbol_module(root, &path, specifier, module_resolution)
+                    })
+                    .unwrap_or_else(|| relative.clone());
+                module
+                    .exports
+                    .insert(export.exported.clone(), (target, export.local.clone()));
             }
             module.star_exports.sort();
             module.star_exports.dedup();
@@ -466,39 +490,6 @@ impl SymbolIndex {
     }
 }
 
-fn import_clause(statement: &str) -> Option<(String, String)> {
-    let body = statement.strip_prefix("import ")?;
-    let (clause, source) = body.rsplit_once(" from ")?;
-    Some((clause.trim().to_owned(), first_quoted(source)?))
-}
-
-fn named_bindings(clause: &str) -> Vec<(String, String)> {
-    let Some(open) = clause.find('{') else {
-        return Vec::new();
-    };
-    let Some(close) = clause[open + 1..].find('}').map(|at| open + 1 + at) else {
-        return Vec::new();
-    };
-    clause[open + 1..close]
-        .split(',')
-        .filter_map(|binding| {
-            let binding = binding
-                .trim()
-                .strip_prefix("type ")
-                .unwrap_or(binding.trim());
-            if binding.is_empty() {
-                return None;
-            }
-            let (source, local) = binding
-                .split_once(" as ")
-                .map_or((binding, binding), |(source, local)| {
-                    (source.trim(), local.trim())
-                });
-            Some((source.to_owned(), local.to_owned()))
-        })
-        .collect()
-}
-
 fn resolve_symbol_module(
     root: &Path,
     source_path: &Path,
@@ -511,68 +502,6 @@ fn resolve_symbol_module(
         module_resolution.resolve(root, specifier)
     }?;
     Some(normalize_path(root, &target))
-}
-
-#[derive(Debug)]
-struct ModuleSpecifier {
-    specifier: String,
-    dynamic: bool,
-}
-
-fn extract_module_specifiers(source: &str) -> Vec<ModuleSpecifier> {
-    let mut modules = Vec::new();
-    for line in source.lines() {
-        if let Some(position) = line.find(" from ")
-            && let Some(specifier) = first_quoted(&line[position + 6..])
-        {
-            modules.push(ModuleSpecifier {
-                specifier,
-                dynamic: false,
-            });
-        } else if line.trim_start().starts_with("import ")
-            && let Some(specifier) = first_quoted(line)
-        {
-            modules.push(ModuleSpecifier {
-                specifier,
-                dynamic: false,
-            });
-        }
-        let mut remaining = line;
-        while let Some(position) = remaining.find("import(") {
-            remaining = &remaining[position + 7..];
-            if let Some(specifier) = first_quoted(remaining) {
-                modules.push(ModuleSpecifier {
-                    specifier,
-                    dynamic: false,
-                });
-            } else {
-                modules.push(ModuleSpecifier {
-                    specifier: "<runtime>".to_owned(),
-                    dynamic: true,
-                });
-            }
-            if let Some(close) = remaining.find(')') {
-                remaining = &remaining[close + 1..];
-            } else {
-                break;
-            }
-        }
-    }
-    modules.sort_by(|left, right| {
-        (&left.specifier, left.dynamic).cmp(&(&right.specifier, right.dynamic))
-    });
-    modules
-        .dedup_by(|left, right| left.specifier == right.specifier && left.dynamic == right.dynamic);
-    modules
-}
-
-fn first_quoted(source: &str) -> Option<String> {
-    let (start, quote) = source
-        .char_indices()
-        .find(|(_, character)| matches!(character, '\'' | '"'))?;
-    let tail = &source[start + quote.len_utf8()..];
-    let end = tail.find(quote)?;
-    Some(tail[..end].to_owned())
 }
 
 fn resolve_module_candidate(base_directory: &Path, specifier: &str) -> Option<PathBuf> {
@@ -830,12 +759,17 @@ fn collect_package_exports(
     }
 }
 
-fn discover_sources(root: &Path, ignore_policy_root: &Path) -> Result<Vec<PathBuf>, String> {
+fn discover_sources(
+    root: &Path,
+    ignore_policy_root: &Path,
+    include_stories: bool,
+) -> Result<Vec<PathBuf>, String> {
     fn visit(
         root: &Path,
         directory: &Path,
         ignore_rules: &[IgnoreRule],
         files: &mut Vec<PathBuf>,
+        include_stories: bool,
     ) -> Result<(), String> {
         for entry in fs::read_dir(directory)
             .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
@@ -869,13 +803,14 @@ fn discover_sources(root: &Path, ignore_policy_root: &Path) -> Result<Vec<PathBu
                     })
                     || generated_public_framework_directory(&relative);
                 if !ignored {
-                    visit(root, &path, ignore_rules, files)?;
+                    visit(root, &path, ignore_rules, files, include_stories)?;
                 }
             } else if file_type.is_file()
                 && matches!(
                     path.extension().and_then(|extension| extension.to_str()),
                     Some("js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts")
                 )
+                && is_application_source(Path::new(&relative), include_stories)
             {
                 files.push(path);
             }
@@ -884,7 +819,7 @@ fn discover_sources(root: &Path, ignore_policy_root: &Path) -> Result<Vec<PathBu
     }
     let mut files = Vec::new();
     let ignore_rules = load_ignore_rules(ignore_policy_root).map_err(|error| error.to_string())?;
-    visit(root, root, &ignore_rules, &mut files)?;
+    visit(root, root, &ignore_rules, &mut files, include_stories)?;
     files.sort();
     Ok(files)
 }

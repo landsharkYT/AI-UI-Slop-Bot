@@ -64,6 +64,7 @@
       "uniqueItems": true,
       "items": { "enum": ["js", "jsx", "ts", "tsx"] }
     },
+    "includeStories": { "type": "boolean", "default": false },
     "tailwindVersion": { "enum": ["auto", "3", "4"] },
     "resources": {
       "type": "object",

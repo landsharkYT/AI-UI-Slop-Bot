@@ -37,18 +37,20 @@ use std::{
 use oxc_allocator::Allocator;
 use oxc_ast::AstKind;
 use oxc_ast::ast::{
-    CallExpression, Class, Expression, Function, JSXAttributeItem, JSXAttributeValue, JSXChild,
-    JSXElement, JSXExpression, ObjectExpression, ObjectPropertyKind, TemplateLiteral,
-    VariableDeclarator,
+    CallExpression, Class, Expression, Function, ImportDeclarationSpecifier, ImportExpression,
+    JSXAttributeItem, JSXAttributeValue, JSXChild, JSXElement, JSXExpression, ObjectExpression,
+    ObjectPropertyKind, Statement, TemplateLiteral, VariableDeclarator,
 };
 use oxc_ast_visit::{
     Visit,
     walk::{
-        walk_call_expression, walk_class, walk_function, walk_jsx_element, walk_variable_declarator,
+        walk_call_expression, walk_class, walk_function, walk_import_expression, walk_jsx_element,
+        walk_variable_declarator,
     },
 };
 use oxc_parser::Parser;
 use oxc_span::SourceType;
+use oxc_syntax::operator::BinaryOperator;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -89,6 +91,7 @@ pub struct ScanPolicy {
     pub class_functions: BTreeSet<String>,
     pub component_wrappers: BTreeSet<String>,
     pub jsx_extensions: BTreeSet<String>,
+    pub include_stories: bool,
     pub max_files: usize,
     pub max_source_bytes: u64,
     pub max_file_bytes: u64,
@@ -127,6 +130,7 @@ impl Default for ScanPolicy {
                 .map(str::to_owned)
                 .collect(),
             jsx_extensions: ["jsx", "tsx"].into_iter().map(str::to_owned).collect(),
+            include_stories: false,
             max_files: 20_000,
             max_source_bytes: 512 * 1024 * 1024,
             max_file_bytes: 2 * 1024 * 1024,
@@ -190,6 +194,8 @@ pub struct ScanReport {
     pub owners: Vec<AnalyzedOwner>,
     #[serde(skip)]
     pub(crate) render_edges: Vec<AnalyzedRenderEdge>,
+    #[serde(skip)]
+    pub(crate) module_facts: Vec<AnalyzedModuleFact>,
     pub coverage: Coverage,
     pub resource_usage: AnalysisResourceUsage,
 }
@@ -215,6 +221,28 @@ pub struct AnalyzedRenderEdge {
     pub path: String,
     pub parent_owner: String,
     pub child_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AnalyzedModuleFact {
+    pub path: String,
+    pub imports: Vec<AnalyzedModuleImport>,
+    pub exports: Vec<AnalyzedModuleExport>,
+    pub star_exports: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AnalyzedModuleImport {
+    pub specifier: String,
+    pub dynamic: bool,
+    pub bindings: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AnalyzedModuleExport {
+    pub specifier: Option<String>,
+    pub local: String,
+    pub exported: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -355,6 +383,10 @@ struct CandidateVisitor<'a> {
     class_functions: &'a BTreeSet<String>,
     component_wrappers: &'a BTreeSet<String>,
     class_bindings: BTreeMap<String, String>,
+    class_maps: BTreeMap<String, BTreeMap<String, String>>,
+    class_helpers: BTreeMap<String, Vec<ResolvedClassState>>,
+    component_maps: BTreeMap<String, BTreeSet<String>>,
+    conditioned_components: BTreeMap<String, BTreeSet<String>>,
     inline_style_bindings: BTreeMap<String, BTreeMap<&'static str, u8>>,
     cva_bindings: BTreeMap<String, CvaBinding>,
     max_reachable_states: usize,
@@ -436,26 +468,40 @@ impl<'a> CandidateVisitor<'a> {
                                     }]
                                 }),
                             JSXExpression::CallExpression(call) => {
-                                let factory = match &call.callee {
-                                    Expression::Identifier(callee) => {
-                                        self.cva_bindings.get(callee.name.as_str()).cloned()
-                                    }
-                                    _ => None,
-                                };
-                                factory
-                                    .and_then(|binding| {
-                                        resolve_cva_call(&binding, call, self.max_reachable_states)
-                                    })
-                                    .or_else(|| {
-                                        resolve_jsx_class_states(
-                                            &container.expression,
-                                            self.class_functions,
-                                        )
-                                    })
+                                if let Expression::Identifier(callee) = &call.callee
+                                    && let Some(states) =
+                                        self.class_helpers.get(callee.name.as_str()).cloned()
+                                {
+                                    Some(states)
+                                } else {
+                                    let factory = match &call.callee {
+                                        Expression::Identifier(callee) => {
+                                            self.cva_bindings.get(callee.name.as_str()).cloned()
+                                        }
+                                        _ => None,
+                                    };
+                                    factory
+                                        .and_then(|binding| {
+                                            resolve_cva_call(
+                                                &binding,
+                                                call,
+                                                self.max_reachable_states,
+                                            )
+                                        })
+                                        .or_else(|| {
+                                            resolve_jsx_class_states_with_maps(
+                                                &container.expression,
+                                                self.class_functions,
+                                                &self.class_maps,
+                                            )
+                                        })
+                                }
                             }
-                            expression => {
-                                resolve_jsx_class_states(expression, self.class_functions)
-                            }
+                            expression => resolve_jsx_class_states_with_maps(
+                                expression,
+                                self.class_functions,
+                                &self.class_maps,
+                            ),
                         };
                         if let Some(states) = states {
                             self.style_expressions_resolved += 1;
@@ -1062,6 +1108,97 @@ fn resolve_jsx_class_states(
     }
 }
 
+fn resolve_jsx_class_states_with_maps(
+    expression: &JSXExpression<'_>,
+    class_functions: &BTreeSet<String>,
+    class_maps: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Option<Vec<ResolvedClassState>> {
+    match expression {
+        JSXExpression::BinaryExpression(binary) if binary.operator == BinaryOperator::Addition => {
+            combine_class_states(
+                resolve_expression_class_states_with_maps(
+                    &binary.left,
+                    "concat:left",
+                    class_functions,
+                    class_maps,
+                )?,
+                resolve_expression_class_states_with_maps(
+                    &binary.right,
+                    "concat:right",
+                    class_functions,
+                    class_maps,
+                )?,
+            )
+        }
+        JSXExpression::ComputedMemberExpression(member) => resolve_class_map_member(
+            &member.object,
+            member.static_property_name().as_deref(),
+            class_maps,
+        ),
+        _ => resolve_jsx_class_states(expression, class_functions),
+    }
+}
+
+fn resolve_expression_class_states_with_maps(
+    expression: &Expression<'_>,
+    state: &str,
+    class_functions: &BTreeSet<String>,
+    class_maps: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Option<Vec<ResolvedClassState>> {
+    match expression {
+        Expression::BinaryExpression(binary) if binary.operator == BinaryOperator::Addition => {
+            combine_class_states(
+                resolve_expression_class_states_with_maps(
+                    &binary.left,
+                    &format!("{state}/left"),
+                    class_functions,
+                    class_maps,
+                )?,
+                resolve_expression_class_states_with_maps(
+                    &binary.right,
+                    &format!("{state}/right"),
+                    class_functions,
+                    class_maps,
+                )?,
+            )
+        }
+        Expression::ComputedMemberExpression(member) => resolve_class_map_member(
+            &member.object,
+            member.static_property_name().as_deref(),
+            class_maps,
+        ),
+        _ => resolve_expression_class_states(expression, state, class_functions),
+    }
+}
+
+fn resolve_class_map_member(
+    object: &Expression<'_>,
+    static_property: Option<&str>,
+    class_maps: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Option<Vec<ResolvedClassState>> {
+    let Expression::Identifier(identifier) = object else {
+        return None;
+    };
+    let values = class_maps.get(identifier.name.as_str())?;
+    if let Some(property) = static_property {
+        return values.get(property).map(|classes| {
+            vec![ResolvedClassState {
+                id: format!("map:{}:{property}", identifier.name),
+                classes: classes.clone(),
+            }]
+        });
+    }
+    (values.len() <= 16).then(|| {
+        values
+            .iter()
+            .map(|(key, classes)| ResolvedClassState {
+                id: format!("map:{}:{key}", identifier.name),
+                classes: classes.clone(),
+            })
+            .collect()
+    })
+}
+
 fn resolve_expression_class_states(
     expression: &Expression<'_>,
     state: &str,
@@ -1438,8 +1575,56 @@ fn static_class_text(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
+fn collect_helper_class_states(
+    statements: &[Statement<'_>],
+    class_functions: &BTreeSet<String>,
+) -> Option<Vec<ResolvedClassState>> {
+    let mut states = Vec::new();
+    for statement in statements {
+        match statement {
+            Statement::ReturnStatement(returned) => {
+                states.extend(resolve_expression_class_states(
+                    returned.argument.as_ref()?,
+                    "helper:return",
+                    class_functions,
+                )?);
+            }
+            Statement::SwitchStatement(switch) => {
+                for (index, case) in switch.cases.iter().enumerate() {
+                    let returned = case.consequent.iter().find_map(|statement| {
+                        let Statement::ReturnStatement(returned) = statement else {
+                            return None;
+                        };
+                        returned.argument.as_ref()
+                    })?;
+                    states.extend(resolve_expression_class_states(
+                        returned,
+                        &format!("helper:switch:{index}"),
+                        class_functions,
+                    )?);
+                }
+            }
+            Statement::EmptyStatement(_) => {}
+            _ => return None,
+        }
+        if states.len() > 16 {
+            return None;
+        }
+    }
+    (!states.is_empty()).then_some(states)
+}
+
 impl<'a> Visit<'a> for CandidateVisitor<'a> {
     fn visit_function(&mut self, function: &Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
+        if let Some(identifier) = &function.id
+            && !is_component_name(identifier.name.as_str())
+            && let Some(body) = &function.body
+            && let Some(states) =
+                collect_helper_class_states(&body.statements, self.class_functions)
+        {
+            self.class_helpers
+                .insert(identifier.name.to_string(), states);
+        }
         let owner = self
             .owners
             .is_empty()
@@ -1470,6 +1655,42 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
                     }
                 }
                 Expression::ObjectExpression(object) => {
+                    let static_classes = object
+                        .properties
+                        .iter()
+                        .map(|property| {
+                            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                                return None;
+                            };
+                            Some((
+                                property.key.static_name()?.to_string(),
+                                static_class_text(&property.value)?,
+                            ))
+                        })
+                        .collect::<Option<BTreeMap<_, _>>>();
+                    if let Some(static_classes) = static_classes.filter(|map| !map.is_empty()) {
+                        self.class_maps.insert(name.to_string(), static_classes);
+                    }
+                    let component_owners = object
+                        .properties
+                        .iter()
+                        .map(|property| {
+                            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                                return None;
+                            };
+                            let Expression::Identifier(identifier) = &property.value else {
+                                return None;
+                            };
+                            is_component_name(identifier.name.as_str())
+                                .then(|| identifier.name.to_string())
+                        })
+                        .collect::<Option<BTreeSet<_>>>();
+                    if let Some(component_owners) =
+                        component_owners.filter(|owners| !owners.is_empty())
+                    {
+                        self.component_maps
+                            .insert(name.to_string(), component_owners);
+                    }
                     let mut signals = BTreeMap::new();
                     if collect_inline_signals(object, &mut signals) == 0 {
                         self.inline_style_bindings.insert(name.to_string(), signals);
@@ -1497,6 +1718,14 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
                             "opaque-component-wrapper".to_owned(),
                             format!("component-like binding `{name}` uses an unconfigured wrapper"),
                         ));
+                    }
+                }
+                Expression::ComputedMemberExpression(member) => {
+                    if let Expression::Identifier(map) = &member.object
+                        && let Some(owners) = self.component_maps.get(map.name.as_str())
+                    {
+                        self.conditioned_components
+                            .insert(name.to_string(), owners.clone());
                     }
                 }
                 _ => {}
@@ -1564,11 +1793,20 @@ impl<'a> Visit<'a> for CandidateVisitor<'a> {
             && let Some(owner) = self.owners.last()
             && owner.name != tag
         {
-            self.render_edges.push(RenderEdge {
-                parent_path: self.path.to_owned(),
-                parent_owner: owner.name.to_owned(),
-                child_owner: tag.clone(),
-            });
+            if let Some(conditioned) = self.conditioned_components.get(&tag) {
+                self.render_edges
+                    .extend(conditioned.iter().map(|child_owner| RenderEdge {
+                        parent_path: self.path.to_owned(),
+                        parent_owner: owner.name.to_owned(),
+                        child_owner: child_owner.clone(),
+                    }));
+            } else {
+                self.render_edges.push(RenderEdge {
+                    parent_path: self.path.to_owned(),
+                    parent_owner: owner.name.to_owned(),
+                    child_owner: tag.clone(),
+                });
+            }
         }
         let is_dialog = tag == "dialog" || has_dialog_role(element);
         let previous_depth = self.generic_depth;
@@ -1635,6 +1873,7 @@ pub fn scan_with_progress(
         request.policy.max_file_bytes,
         &request.policy.jsx_extensions,
         request.policy.max_directory_depth,
+        request.policy.include_stories,
         &request.cancellation,
     )?;
     emit_progress(
@@ -1654,6 +1893,7 @@ pub fn scan_with_progress(
     let mut candidates = Vec::new();
     let mut facts = Vec::new();
     let mut render_edges = Vec::new();
+    let mut module_facts = Vec::new();
 
     let file_total = discovery.files.len();
     for (index, file) in discovery.files.into_iter().enumerate() {
@@ -1778,6 +2018,7 @@ pub fn scan_with_progress(
             coverage.unresolved.len(),
             "source parsed",
         );
+        module_facts.push(collect_module_fact(&relative, &parsed.program));
 
         emit_progress(
             &mut progress,
@@ -1816,6 +2057,10 @@ pub fn scan_with_progress(
                 class_functions: &request.policy.class_functions,
                 component_wrappers: &request.policy.component_wrappers,
                 class_bindings: BTreeMap::new(),
+                class_maps: BTreeMap::new(),
+                class_helpers: BTreeMap::new(),
+                component_maps: BTreeMap::new(),
+                conditioned_components: BTreeMap::new(),
                 inline_style_bindings: BTreeMap::new(),
                 cva_bindings: BTreeMap::new(),
                 max_reachable_states: request.policy.max_reachable_states,
@@ -1981,9 +2226,110 @@ pub fn scan_with_progress(
                 child_name: edge.child_owner,
             })
             .collect(),
+        module_facts,
         coverage,
         resource_usage,
     })
+}
+
+pub(crate) fn collect_module_fact(
+    path: &str,
+    program: &oxc_ast::ast::Program<'_>,
+) -> AnalyzedModuleFact {
+    let mut imports = Vec::new();
+    let mut exports = Vec::new();
+    let mut star_exports = Vec::new();
+    for statement in &program.body {
+        match statement {
+            Statement::ImportDeclaration(declaration) => {
+                let bindings = declaration
+                    .specifiers
+                    .iter()
+                    .flatten()
+                    .map(|binding| match binding {
+                        ImportDeclarationSpecifier::ImportSpecifier(binding) => (
+                            binding.imported.name().to_string(),
+                            binding.local.name.to_string(),
+                        ),
+                        ImportDeclarationSpecifier::ImportDefaultSpecifier(binding) => {
+                            ("default".to_owned(), binding.local.name.to_string())
+                        }
+                        ImportDeclarationSpecifier::ImportNamespaceSpecifier(binding) => {
+                            ("*".to_owned(), binding.local.name.to_string())
+                        }
+                    })
+                    .collect();
+                imports.push(AnalyzedModuleImport {
+                    specifier: declaration.source.value.to_string(),
+                    dynamic: false,
+                    bindings,
+                });
+            }
+            Statement::ExportAllDeclaration(declaration) => {
+                star_exports.push(declaration.source.value.to_string());
+            }
+            Statement::ExportNamedDeclaration(declaration) => {
+                exports.extend(declaration.specifiers.iter().map(|binding| {
+                    AnalyzedModuleExport {
+                        specifier: declaration
+                            .source
+                            .as_ref()
+                            .map(|source| source.value.to_string()),
+                        local: binding.local.name().to_string(),
+                        exported: binding.exported.name().to_string(),
+                    }
+                }));
+            }
+            _ => {}
+        }
+    }
+    let mut dynamic = DynamicImportCollector::default();
+    dynamic.visit_program(program);
+    imports.extend(dynamic.imports);
+    imports.sort_by(|left, right| {
+        (&left.specifier, left.dynamic, &left.bindings).cmp(&(
+            &right.specifier,
+            right.dynamic,
+            &right.bindings,
+        ))
+    });
+    imports.dedup();
+    exports.sort_by(|left, right| {
+        (&left.exported, &left.local, &left.specifier).cmp(&(
+            &right.exported,
+            &right.local,
+            &right.specifier,
+        ))
+    });
+    exports.dedup();
+    star_exports.sort();
+    star_exports.dedup();
+    AnalyzedModuleFact {
+        path: path.to_owned(),
+        imports,
+        exports,
+        star_exports,
+    }
+}
+
+#[derive(Default)]
+struct DynamicImportCollector {
+    imports: Vec<AnalyzedModuleImport>,
+}
+
+impl<'a> Visit<'a> for DynamicImportCollector {
+    fn visit_import_expression(&mut self, expression: &ImportExpression<'a>) {
+        let (specifier, dynamic) = match &expression.source {
+            Expression::StringLiteral(literal) => (literal.value.to_string(), false),
+            _ => ("<runtime>".to_owned(), true),
+        };
+        self.imports.push(AnalyzedModuleImport {
+            specifier,
+            dynamic,
+            bindings: Vec::new(),
+        });
+        walk_import_expression(self, expression);
+    }
 }
 
 #[derive(Default)]
@@ -2109,6 +2455,7 @@ fn discover_source_files(
     max_file_bytes: u64,
     jsx_extensions: &BTreeSet<String>,
     max_directory_depth: usize,
+    include_stories: bool,
     cancellation: &CancellationToken,
 ) -> Result<DiscoveredSources, ScanError> {
     #[expect(
@@ -2126,6 +2473,7 @@ fn discover_source_files(
         depth: usize,
         max_directory_depth: usize,
         cancellation: &CancellationToken,
+        include_stories: bool,
     ) -> Result<(), ScanError> {
         if cancellation.is_cancelled() {
             return Err(ScanError::cancelled());
@@ -2189,8 +2537,11 @@ fn discover_source_files(
                         depth + 1,
                         max_directory_depth,
                         cancellation,
+                        include_stories,
                     )?;
-                } else if eligible_source(&resolved, jsx_extensions) {
+                } else if eligible_source(&resolved, jsx_extensions)
+                    && is_application_source(Path::new(&relative), include_stories)
+                {
                     files.entry(resolved.clone()).or_insert(resolved);
                 }
                 continue;
@@ -2224,9 +2575,13 @@ fn discover_source_files(
                         depth + 1,
                         max_directory_depth,
                         cancellation,
+                        include_stories,
                     )?;
                 }
-            } else if file_type.is_file() && eligible_source(&path, jsx_extensions) {
+            } else if file_type.is_file()
+                && eligible_source(&path, jsx_extensions)
+                && is_application_source(Path::new(&relative), include_stories)
+            {
                 let resolved = path.canonicalize().map_err(|error| {
                     ScanError::new(format!("cannot resolve {}: {error}", path.display()))
                 })?;
@@ -2251,6 +2606,7 @@ fn discover_source_files(
         0,
         max_directory_depth,
         cancellation,
+        include_stories,
     )?;
     let mut files = files_by_identity.into_values().collect::<Vec<_>>();
     files.sort();
@@ -2419,6 +2775,37 @@ fn eligible_source(path: &Path, jsx_extensions: &BTreeSet<String>) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| jsx_extensions.contains(extension))
+}
+
+pub(crate) fn is_application_source(path: &Path, include_stories: bool) -> bool {
+    let excluded_directory = path.components().any(|component| {
+        component.as_os_str().to_str().is_some_and(|name| {
+            matches!(
+                name.to_ascii_lowercase().as_str(),
+                "test"
+                    | "tests"
+                    | "spec"
+                    | "specs"
+                    | "__tests__"
+                    | "__mocks__"
+                    | "mocks"
+                    | "fixtures"
+            )
+        })
+    });
+    if excluded_directory {
+        return false;
+    }
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = file_name.to_ascii_lowercase();
+    if !include_stories && lower.contains(".stories.") {
+        return false;
+    }
+    ![".test.", ".spec.", ".mock.", ".fixture."]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 fn activate_recurrence(candidates: Vec<Candidate>, analysis_scope: &str) -> Vec<Finding> {
@@ -3619,6 +4006,26 @@ fn collect_inline_signals(
             unresolved += 1;
             continue;
         };
+        if !matches!(
+            name.as_ref(),
+            "borderRadius"
+                | "border-radius"
+                | "background"
+                | "backgroundImage"
+                | "background-image"
+                | "boxShadow"
+                | "box-shadow"
+                | "backdropFilter"
+                | "backdrop-filter"
+                | "border"
+                | "borderWidth"
+                | "border-width"
+                | "borderColor"
+                | "border-color"
+                | "padding"
+        ) {
+            continue;
+        }
         let value = match &property.value {
             Expression::StringLiteral(value) => StaticStyleValue::Text(value.value.as_str()),
             Expression::NumericLiteral(value) => StaticStyleValue::Number(value.value),

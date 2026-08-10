@@ -52,12 +52,15 @@ export function Page(){return <main><Card /><LazyCard /></main>}
             && edge.to == "file:src/ui/Card.tsx"
             && edge.resolved
     }));
-    assert!(edges.iter().any(|edge| {
-        edge.kind == "imports"
-            && edge.from == "file:src/ui/index.ts"
-            && edge.to == "file:src/ui/Card.tsx"
-            && edge.resolved
-    }));
+    assert!(
+        edges.iter().any(|edge| {
+            edge.kind == "imports"
+                && edge.from == "file:src/ui/index.ts"
+                && edge.to == "file:src/ui/Card.tsx"
+                && edge.resolved
+        }),
+        "{edges:#?}"
+    );
 }
 
 #[test]

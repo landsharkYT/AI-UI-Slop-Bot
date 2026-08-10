@@ -24,7 +24,7 @@ class AgentSkillRunnerTests(unittest.TestCase):
                 set -u
                 case "${1:-}" in
                   version)
-                    printf '%s\\n' 'ai-ui-slop 0.14.0 report-schema 8 rule-pack 1.0.0-beta.8'
+                    printf '%s\\n' 'ai-ui-slop 0.15.0 report-schema 9 rule-pack 1.0.0-beta.9'
                     ;;
                   init)
                     printf '%s\\n' '{"schemaVersion":"1"}' > "$2/ai-ui-slop.config.jsonc"
@@ -36,9 +36,9 @@ class AgentSkillRunnerTests(unittest.TestCase):
                   scan)
                     repo=$2
                     mkdir -p "$repo/.ai-ui-slop/reports"
-                    printf '%s\\n' '{"schemaVersion":"8","scopes":[]}' > "$repo/.ai-ui-slop/reports/report.json"
+                    printf '%s\\n' '{"schemaVersion":"9","scopes":[]}' > "$repo/.ai-ui-slop/reports/report.json"
                     printf '%s\\n' '# Refactoring brief' > "$repo/.ai-ui-slop/reports/refactoring-brief.md"
-                    printf '%s\\n' '{"schemaVersion":"8","scopes":[]}'
+                    printf '%s\\n' '{"schemaVersion":"9","scopes":[]}'
                     printf '%s\\n' 'scan progress' >&2
                     exit "${FAKE_SCAN_EXIT:-0}"
                     ;;
@@ -69,7 +69,7 @@ class AgentSkillRunnerTests(unittest.TestCase):
     def test_doctor_is_read_only_and_reports_missing_configuration(self):
         result = self.run_runner("doctor", str(self.repository))
         self.assertEqual(result.returncode, 2)
-        self.assertIn("ai-ui-slop 0.14.0", result.stdout)
+        self.assertIn("ai-ui-slop 0.15.0", result.stdout)
         self.assertIn("configuration: absent", result.stdout)
         self.assertFalse((self.repository / "ai-ui-slop.config.jsonc").exists())
 

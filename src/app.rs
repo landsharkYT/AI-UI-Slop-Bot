@@ -19,8 +19,8 @@ use crate::{
     style::{StyleAdapterReport, StyleRequest, inspect as inspect_style},
 };
 
-pub const REPORT_SCHEMA_VERSION: &str = "8";
-pub const RULE_PACK_VERSION: &str = "1.0.0-beta.8";
+pub const REPORT_SCHEMA_VERSION: &str = "9";
+pub const RULE_PACK_VERSION: &str = "1.0.0-beta.9";
 
 #[derive(Debug, Clone)]
 pub struct RepositoryRequest {
@@ -229,6 +229,111 @@ pub struct ScopeDiagnostic {
     pub reason: String,
     pub path: String,
     pub detail: String,
+    pub classification: String,
+    pub bounded: bool,
+    pub affected_units: u64,
+    pub relevant_signals: Vec<String>,
+    pub recovery: String,
+    pub line: Option<u64>,
+    pub resolved_units: u64,
+    pub unresolved_units: u64,
+    pub representative_total: u64,
+    pub representatives: Vec<String>,
+}
+
+impl ScopeDiagnostic {
+    fn inferred(reason: String, path: String, detail: String) -> Self {
+        let classification = if reason == "style-adapter-unresolved"
+            || reason.ends_with("-warning")
+            || reason.contains("suppression")
+            || reason.starts_with("unmatched-")
+            || matches!(
+                reason.as_str(),
+                "policy-change-proposal" | "no-eligible-source"
+            ) {
+            "limitation"
+        } else {
+            "blocking_loss"
+        };
+        let bounded = classification == "limitation"
+            && !detail.contains("budget")
+            && !detail.contains("runtime")
+            && !detail.contains("could not resolve");
+        let recovery = match reason.as_str() {
+            "style-adapter-unresolved" => {
+                "Review the named stylesheet construct; add a static adapter only if it affects relevant UI signals."
+            }
+            "dynamic-styling" => {
+                "Replace the relevant runtime style with a bounded static expression or configure a supported class helper."
+            }
+            "unresolved-component-edge" | "unresolved-import" => {
+                "Make the import or component ownership statically resolvable from this source file."
+            }
+            reason if reason.ends_with("-warning") => {
+                "Inspect the affected coverage dimension before applying automated fixes."
+            }
+            _ => "Inspect the diagnostic detail and restore the missing static evidence.",
+        }
+        .to_owned();
+        let representative = detail.clone();
+        Self {
+            reason,
+            path,
+            detail,
+            classification: classification.to_owned(),
+            bounded,
+            affected_units: u64::from(classification == "blocking_loss"),
+            relevant_signals: Vec::new(),
+            recovery,
+            line: None,
+            resolved_units: 0,
+            unresolved_units: u64::from(classification == "blocking_loss"),
+            representative_total: 1,
+            representatives: vec![representative],
+        }
+    }
+}
+
+fn style_adapter_blocking(detail: &str) -> bool {
+    [
+        "unresolved CSS import",
+        "import budget exhausted",
+        "cyclic Tailwind CSS",
+        "conflicts with selected major version",
+        "configured Tailwind major version",
+        "dynamic Tailwind configuration",
+        "outside the Analysis Scope",
+    ]
+    .iter()
+    .any(|marker| detail.contains(marker))
+}
+
+fn style_adapter_diagnostic(path: String, detail: String) -> ScopeDiagnostic {
+    let blocking = style_adapter_blocking(&detail);
+    let attributed_path = detail
+        .split_once(": ")
+        .filter(|(candidate, _)| {
+            candidate.ends_with(".css")
+                || candidate.ends_with(".scss")
+                || candidate.ends_with(".sass")
+        })
+        .map_or(path, |(candidate, _)| candidate.to_owned());
+    let mut diagnostic = ScopeDiagnostic::inferred(
+        "style-adapter-unresolved".to_owned(),
+        attributed_path,
+        detail,
+    );
+    diagnostic.affected_units = 1;
+    diagnostic.unresolved_units = 1;
+    if blocking {
+        diagnostic.classification = "blocking_loss".to_owned();
+        diagnostic.bounded = false;
+        diagnostic.affected_units = 1;
+        diagnostic.recovery =
+            "Restore the missing or invalid style configuration input before trusting style coverage."
+                .to_owned();
+    }
+    diagnostic
 }
 
 pub fn analyze_repository(request: RepositoryRequest) -> Result<CanonicalReport, RepositoryError> {
@@ -418,24 +523,26 @@ fn analyze_scope(
         .suppressions
         .iter()
         .filter(|suppression| suppression_is_expired(suppression))
-        .map(|suppression| ScopeDiagnostic {
-            reason: "expired-suppression".to_owned(),
-            path: suppression.path.clone(),
-            detail: format!(
-                "Suppression for `{}` and rule `{}` expired at {}",
-                suppression.owner,
-                suppression.rule_id,
-                suppression.expires.as_deref().unwrap_or("unknown")
-            ),
+        .map(|suppression| {
+            ScopeDiagnostic::inferred(
+                "expired-suppression".to_owned(),
+                suppression.path.clone(),
+                format!(
+                    "Suppression for `{}` and rule `{}` expired at {}",
+                    suppression.owner,
+                    suppression.rule_id,
+                    suppression.expires.as_deref().unwrap_or("unknown")
+                ),
+            )
         })
         .collect::<Vec<_>>();
     if policy_changed {
-        policy_diagnostics.push(ScopeDiagnostic {
-            reason: "policy-change-proposal".to_owned(),
-            path: "ai-ui-slop.config.jsonc".to_owned(),
-            detail: "checkout policy differs from Trusted Policy and did not affect this analysis"
+        policy_diagnostics.push(ScopeDiagnostic::inferred(
+            "policy-change-proposal".to_owned(),
+            "ai-ui-slop.config.jsonc".to_owned(),
+            "checkout policy differs from Trusted Policy and did not affect this analysis"
                 .to_owned(),
-        });
+        ));
     }
     let routes = classify_routes(
         &effective.absolute_root,
@@ -510,6 +617,7 @@ fn analyze_scope(
         class_functions: effective.class_functions.iter().cloned().collect(),
         component_wrappers: effective.component_wrappers.iter().cloned().collect(),
         jsx_extensions: effective.jsx_extensions.iter().cloned().collect(),
+        include_stories: effective.include_stories,
         max_files: effective.resources.max_files,
         max_source_bytes: effective.resources.max_source_bytes,
         max_file_bytes: effective.resources.max_file_bytes,
@@ -541,14 +649,14 @@ fn analyze_scope(
                 && finding.owner == suppression.owner
         });
         if !matched {
-            policy_diagnostics.push(ScopeDiagnostic {
-                reason: "unmatched-suppression".to_owned(),
-                path: suppression.path.clone(),
-                detail: format!(
+            policy_diagnostics.push(ScopeDiagnostic::inferred(
+                "unmatched-suppression".to_owned(),
+                suppression.path.clone(),
+                format!(
                     "Suppression for `{}` and rule `{}` matched no Finding",
                     suppression.owner, suppression.rule_id
                 ),
-            });
+            ));
         }
     }
     for primitive in &effective.house_style.approved_primitives {
@@ -557,14 +665,14 @@ fn analyze_scope(
             .iter()
             .any(|owner| owner.path == primitive.path && owner.owner == primitive.owner);
         if !matched {
-            policy_diagnostics.push(ScopeDiagnostic {
-                reason: "unmatched-approved-primitive".to_owned(),
-                path: primitive.path.clone(),
-                detail: format!(
+            policy_diagnostics.push(ScopeDiagnostic::inferred(
+                "unmatched-approved-primitive".to_owned(),
+                primitive.path.clone(),
+                format!(
                     "approved primitive `{}` matched no component owner",
                     primitive.owner
                 ),
-            });
+            ));
         }
     }
     let graph_routes = routes
@@ -592,6 +700,8 @@ fn analyze_scope(
         ignore_policy_root,
         owners: &scan_report.owners,
         render_edges: &scan_report.render_edges,
+        module_facts: &scan_report.module_facts,
+        include_stories: effective.include_stories,
         routes: &graph_routes,
         approved_primitives: &approved_primitives,
         max_edges: effective.resources.max_graph_edges,
@@ -624,21 +734,12 @@ fn analyze_scope(
         .coverage
         .unresolved
         .into_iter()
-        .map(|issue| ScopeDiagnostic {
-            reason: issue.reason,
-            path: issue.path,
-            detail: issue.detail,
-        })
+        .map(|issue| ScopeDiagnostic::inferred(issue.reason, issue.path, issue.detail))
         .collect::<Vec<_>>();
     diagnostics.extend(
-        style_adapter
-            .unresolved
-            .iter()
-            .map(|detail| ScopeDiagnostic {
-                reason: "style-adapter-unresolved".to_owned(),
-                path: effective.relative_root.clone(),
-                detail: detail.clone(),
-            }),
+        style_adapter.unresolved.iter().map(|detail| {
+            style_adapter_diagnostic(effective.relative_root.clone(), detail.clone())
+        }),
     );
     diagnostics.append(&mut policy_diagnostics);
     let coverage = CoverageVector {
@@ -673,7 +774,11 @@ fn analyze_scope(
     let style_sufficient = coverage.style_resolution.denominator == 0
         || coverage.style_resolution.numerator.saturating_mul(100)
             >= coverage.style_resolution.denominator.saturating_mul(75);
-    let style_sufficient = style_sufficient && style_adapter.unresolved.is_empty();
+    let style_sufficient = style_sufficient
+        && !style_adapter
+            .unresolved
+            .iter()
+            .any(|detail| style_adapter_blocking(detail));
     let graph_sufficient = !graph_analysis.graph.truncated
         && (coverage.component_graph.denominator == 0
             || coverage.component_graph.numerator.saturating_mul(100)
@@ -682,42 +787,32 @@ fn analyze_scope(
         && coverage.style_resolution.numerator.saturating_mul(100)
             < coverage.style_resolution.denominator.saturating_mul(90)
     {
-        diagnostics.push(ScopeDiagnostic {
-            reason: "style-coverage-warning".to_owned(),
-            path: effective.relative_root.clone(),
-            detail: "style-resolution coverage is below the provisional 90% warning floor"
-                .to_owned(),
-        });
+        diagnostics.push(ScopeDiagnostic::inferred(
+            "style-coverage-warning".to_owned(),
+            effective.relative_root.clone(),
+            "style-resolution coverage is below the provisional 90% warning floor".to_owned(),
+        ));
     }
     if coverage.component_graph.denominator > 0
         && coverage.component_graph.numerator.saturating_mul(100)
             < coverage.component_graph.denominator.saturating_mul(85)
     {
-        diagnostics.push(ScopeDiagnostic {
-            reason: "component-graph-coverage-warning".to_owned(),
-            path: effective.relative_root.clone(),
-            detail: "component-graph coverage is below the provisional 85% warning floor"
-                .to_owned(),
-        });
+        diagnostics.push(ScopeDiagnostic::inferred(
+            "component-graph-coverage-warning".to_owned(),
+            effective.relative_root.clone(),
+            "component-graph coverage is below the provisional 85% warning floor".to_owned(),
+        ));
     }
-    diagnostics.extend(
-        graph_analysis
-            .diagnostics
-            .into_iter()
-            .map(|diagnostic| ScopeDiagnostic {
-                reason: diagnostic.reason,
-                path: diagnostic.path,
-                detail: diagnostic.detail,
-            }),
-    );
+    diagnostics.extend(graph_analysis.diagnostics.into_iter().map(|diagnostic| {
+        ScopeDiagnostic::inferred(diagnostic.reason, diagnostic.path, diagnostic.detail)
+    }));
     if discovered == 0 {
-        diagnostics.push(ScopeDiagnostic {
-            reason: "no-eligible-source".to_owned(),
-            path: effective.relative_root.clone(),
-            detail:
-                "no eligible supported React source files were discovered in this Analysis Scope"
-                    .to_owned(),
-        });
+        diagnostics.push(ScopeDiagnostic::inferred(
+            "no-eligible-source".to_owned(),
+            effective.relative_root.clone(),
+            "no eligible supported React source files were discovered in this Analysis Scope"
+                .to_owned(),
+        ));
     }
     let status = if discovered == 0 {
         "not_applicable"

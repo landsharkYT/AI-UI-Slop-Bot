@@ -405,7 +405,7 @@ impl<'a> StyleAnalysis<'a> {
         }
         let mut seen_plain_classes = BTreeSet::new();
         let mut ambiguous_plain_classes = BTreeSet::new();
-        for (_, source) in &self.plain_css_sources {
+        for (path, source) in &self.plain_css_sources {
             let mut local_utilities = BTreeMap::new();
             let mut local_structures = BTreeMap::new();
             let mut local_cards = BTreeSet::new();
@@ -419,16 +419,14 @@ impl<'a> StyleAnalysis<'a> {
                 &mut local_traits,
             );
             if outcome.unresolved_selectors {
-                self.unresolved.insert(
-                    "signal-bearing conditional or compound plain CSS selectors remain unresolved"
-                        .to_owned(),
-                );
+                self.unresolved.insert(format!(
+                    "{path}: signal-bearing conditional or compound plain CSS selectors remain unresolved"
+                ));
             }
             if outcome.unresolved_variables {
-                self.unresolved.insert(
-                    "unresolved, ambiguous, or cyclic plain CSS custom properties remain unresolved"
-                        .to_owned(),
-                );
+                self.unresolved.insert(format!(
+                    "{path}: unresolved, ambiguous, or cyclic plain CSS custom properties remain unresolved"
+                ));
             }
             let local_names = local_utilities
                 .keys()

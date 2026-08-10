@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ai-ui-slop.dev/schema/report/8",
+  "$id": "https://ai-ui-slop.dev/schema/report/9",
   "title": "AI UI Slop Canonical Report",
   "type": "object",
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "artifactType": { "const": "ai-ui-slop.canonical-report" },
-    "schemaVersion": { "const": "8" },
+    "schemaVersion": { "const": "9" },
     "toolVersion": { "type": "string" },
     "rulePackVersion": { "type": "string" },
     "fingerprintAlgorithmVersion": { "type": "string" },
@@ -55,6 +55,29 @@
         ],
         "properties": {
           "status": { "enum": ["complete", "incomplete", "not_applicable"] },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["reason", "path", "detail", "classification", "bounded", "affectedUnits", "relevantSignals", "recovery", "line", "resolvedUnits", "unresolvedUnits", "representativeTotal", "representatives"],
+              "properties": {
+                "reason": { "type": "string" },
+                "path": { "type": "string" },
+                "detail": { "type": "string" },
+                "classification": { "enum": ["limitation", "blocking_loss"] },
+                "bounded": { "type": "boolean" },
+                "affectedUnits": { "type": "integer", "minimum": 0 },
+                "relevantSignals": { "type": "array", "items": { "type": "string" } },
+                "recovery": { "type": "string", "minLength": 1 }
+                ,"line": { "type": ["integer", "null"], "minimum": 1 }
+                ,"resolvedUnits": { "type": "integer", "minimum": 0 }
+                ,"unresolvedUnits": { "type": "integer", "minimum": 0 }
+                ,"representativeTotal": { "type": "integer", "minimum": 0 }
+                ,"representatives": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            }
+          },
           "resourceUsage": {
             "type": "object",
             "required": ["sourceBytesRead", "parserArenaPeakBytes", "peakAccountedAnalysisBytes", "astNodesSeen", "diagnosticsEmitted"],

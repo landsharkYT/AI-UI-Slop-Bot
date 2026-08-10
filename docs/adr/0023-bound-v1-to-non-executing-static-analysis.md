@@ -7,3 +7,5 @@ Full V1 guarantees the documented, bounded static-analysis surface rather than a
 Bounded static Tailwind theme and custom-utility semantics, supported variant reachability, symbol-aware re-export provenance, and component-level shared-primitive attribution remain V1 features. They materially affect whether Findings are correct and actionable, so incomplete implementations are V1 Implementation Blockers rather than deferred enhancements.
 
 Advisory Use-Case Trials may run while those blockers remain so real-repository evidence can guide the work. Such trials cannot enable baseline enforcement or support V1 qualification claims.
+
+The `0.15.0` coverage-correction pass does not reopen this boundary. It adds accurate attribution for the existing plain-CSS surface, bounded conditional and compound-selector reasoning, relevant custom-property provenance, and structured Coverage Diagnostics; CSS Modules, CSS-in-JS execution, runtime theme providers, browser layout, and a general computed-style or cascade engine remain outside the pass.

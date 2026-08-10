@@ -114,7 +114,7 @@ export const Automatic = () => _jsx(
         .map(|finding| finding.owner.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(report.schema_version, "8");
+    assert_eq!(report.schema_version, "9");
     assert!(owners.contains(&"Classic"));
     assert!(owners.contains(&"Automatic"));
     assert_eq!(report.scopes[0].coverage.parse.denominator, 1);

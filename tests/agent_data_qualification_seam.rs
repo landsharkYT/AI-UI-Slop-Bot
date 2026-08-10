@@ -71,7 +71,7 @@ export function Gamma(){return <section className="page-card">Gamma</section>}
             .iter()
             .any(|evidence| evidence.signal_id == "gradient-surface")
     }));
-    assert_eq!(scope.status, "incomplete");
+    assert_eq!(scope.status, "complete");
     assert!(
         scope
             .style_adapter
@@ -213,7 +213,7 @@ fn unrelated_stylesheets_do_not_form_a_fictional_cross_entrypoint_cascade() {
     let report = analyze_repository(RepositoryRequest::new(repository.path())).expect("analysis");
     let scope = &report.scopes[0];
 
-    assert_eq!(scope.status, "incomplete");
+    assert_eq!(scope.status, "complete");
     assert!(scope.findings.is_empty(), "{:#?}", scope.findings);
     assert!(
         scope
