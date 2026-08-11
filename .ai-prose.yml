@@ -1,0 +1,120 @@
+schema_version: 1
+
+exclude:
+  # This malformed TSX file is an intentional parser-recovery fixture asserted
+  # by tests/scanner_seam.rs and tests/qualification_property_seam.rs.
+  - "tests/fixtures/partial-parse/Malformed.tsx"
+
+profiles:
+  general:
+    - ".github/**"
+    - "README.md"
+    - "requirements.md"
+    - "docs/**"
+    - "skills/**"
+
+jargon_allowlists:
+  general:
+    - ABI
+    - AC
+    - ADR
+    - AI
+    - ANSI
+    - APACHE
+    - API
+    - ARIA
+    - ARM
+    - ARM64
+    - AST
+    - AUR
+    - BOM
+    - C0
+    - C1
+    - CI
+    - CLI
+    - COMPAT
+    - CONFIG
+    - CPU
+    - CRL
+    - CRLF
+    - CSS
+    - CTA
+    - CVA
+    - DCO
+    - DETECT
+    - DIST
+    - DOM
+    - DSL
+    - EFFECT
+    - FR
+    - GB
+    - HTML
+    - INTENT
+    - JS
+    - JSX
+    - JSON
+    - JSONC
+    - LF
+    - LLVM
+    - LLM
+    - MB
+    - MDX
+    - MHGU
+    - MIT
+    - MODEL
+    - MVP
+    - NET
+    - NEXT
+    - NORM
+    - OR
+    - OS
+    - OSM
+    - OXC
+    - PARSE
+    - PASS
+    - PR
+    - README
+    - RECALL
+    - React
+    - REPORT
+    - ROUTE
+    - RSS
+    - RULE
+    - SARIF
+    - SBOM
+    - SCOPE
+    - SCORE
+    - SHA
+    - SHA256
+    - SHELL
+    - SHOT
+    - SPA
+    - SPDX
+    - STYLE
+    - TECH
+    - TEST
+    - TEXT
+    - TRACE
+    - TSX
+    - UI
+    - UTF
+    - UX
+    - V1
+    - VCS
+  developer:
+    - API
+    - AST
+    - CSS
+    - DOM
+    - JSX
+    - JSONC
+    - MDX
+    - OXC
+    - React
+    - SARIF
+    - TSX
+    - UI
+
+# This project uses a casual technical voice. These are essential project
+# terms, not a blanket developer-audience exemption.
+tmr_enabled: true

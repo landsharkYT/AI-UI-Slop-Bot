@@ -1,4 +1,4 @@
-# Shot 6 — Semantic Repository Ownership Candidate
+# Shot 6: Semantic Repository Ownership Candidate
 
 Status: implemented locally; final implementation and validation gates remain explicit.
 

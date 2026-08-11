@@ -8,7 +8,7 @@ Date: 2026-07-30
 
 Rule pack `1.0.0-beta.6` requires Framework Default Convergence signals to coexist as one coherent eligible display recipe in each participating owner. Cross-owner recurrence contributes to the Repository Profile but no longer inflates the intrinsic Finding score.
 
-Template Convergence recognizes page owners by component identity rather than page-like filenames. Generic equal-column and command grids are not stock page structures: bento evidence requires explicit spanning, while a three-card feature structure requires an explicit three-column grid with exactly three direct elements. Dialog descendants are excluded from persistent decoration and framework convergence.
+Template Convergence recognizes page owners by component identity rather than page-like filenames. Bento evidence requires explicit spanning. A three-card feature structure requires an explicit three-column grid with exactly three direct elements, so generic equal-column and command grids remain outside both patterns. Dialog descendants are excluded from persistent decoration and framework convergence.
 
 Every reported signal selects evidence from an element that actually produced that signal. A static empty Tailwind v3 `plugins` array is resolved configuration, not dynamic coverage loss.
 

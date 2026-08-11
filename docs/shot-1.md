@@ -1,4 +1,4 @@
-# Shot 1 — Breadth-Complete V1 Alpha
+# Shot 1: Breadth-Complete V1 Alpha
 
 Status: implemented; Shot 2 hardening and release evidence pending.
 

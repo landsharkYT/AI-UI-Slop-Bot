@@ -51,7 +51,7 @@ The repeated pass produced:
 - WebsiteHelper: no Findings, two diagnostics, and 58/58 component-graph coverage; and
 - EvacLogix: ten `repeated-decorative-shell` Findings at score 52 across ten owners, seven diagnostics, and 203/203 component-graph coverage.
 
-The remaining OSM graph miss is an authored worker runtime expression rather than generated framework noise. The original repositories were not modified; initialization and scans ran on disposable copies.
+The remaining OSM graph miss is an authored worker runtime expression rather than generated framework noise. Initialization and scans ran on disposable copies, leaving the original repositories unchanged.
 
 After the follow-up changes, the deterministic 500-file, 500,500-line release benchmark completed in 147 ms with a 14,400 KiB peak RSS. The 20-pair progress trial measured a -0.04% median overhead and passed the 2% median gate.
 

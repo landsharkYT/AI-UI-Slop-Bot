@@ -24,4 +24,4 @@ Fresh scans of the four existing disposable repository copies produced:
 
 All four CLI scans remained coverage-incomplete under the active coverage floor, so this table reports rule Finding counts and Finding scores rather than inventing qualified repository scores. The original repositories were not modified.
 
-These outcomes intentionally revoke ReactPDFRedactor and the OSM utility as clean negative controls. They are dogfood judgments, not blind customer labels; precision and satisfaction still require reviewer calibration.
+These outcomes intentionally revoke ReactPDFRedactor and the OSM utility as clean negative controls. They are dogfood judgments rather than blind customer labels. Precision and satisfaction still require reviewer calibration.

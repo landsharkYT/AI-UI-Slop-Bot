@@ -29,8 +29,8 @@ Five public-seam tests now cover:
 - Next.js `src/app/page.tsx` adapter recognition;
 - exact route owners such as `Home` participating in Template Convergence without promoting helpers in the same module;
 - named identifiers referenced by `export default` retaining route ownership;
-- action-control column spans not becoming bento evidence; and
-- test modules not becoming application routes.
+- exclusion of action-control column spans from bento evidence; and
+- exclusion of test modules from application routes.
 
 The CourseOfTemptation route inventory fell from 25 to 15 after removing test modules. MHGU now reports its `src/app/page.tsx#Home` boundary as a high-confidence Next App Router route rather than a medium-confidence generic filesystem route.
 
@@ -40,4 +40,4 @@ The set is dominated by React, TypeScript, Vite, Tailwind, and global plain CSS.
 
 ## Completion judgment
 
-The locally implementable V1 scanner is feature-complete enough for structured use-case testing. It is not release-validated. The critical path is now labeled customer calibration, committed licensed reference cases, rendered before/after review, reference-runner performance evidence, hosted platform smoke tests, and authenticated release verification—not additional heuristic breadth.
+The locally implementable V1 scanner is feature-complete enough for structured use-case testing. It is not release-validated. The critical path now covers customer calibration, committed licensed reference cases, rendered before/after review, reference-runner performance evidence, hosted platform smoke tests, and authenticated release verification. Additional heuristic breadth is outside that path.

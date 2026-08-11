@@ -17,4 +17,4 @@ A Repository Profile is the bounded sum of four named contributions:
 - cross-owner recurrence: three points per pattern-owner occurrence beyond that pattern's first distinct owner, capped at 15; and
 - multi-pattern density: two points per owner carrying at least two distinct patterns, capped at 5.
 
-Arithmetic is performed in a widened integer type before normalization. Each contribution exposes its points, cap, evidence count, and explanation. Incomplete Analysis Coverage does not secretly reweight the score; it marks the Repository Profile interpretation `coverage_limited` instead of `qualified`.
+Arithmetic is performed in a widened integer type before normalization. Each contribution exposes its points, cap, evidence count, and explanation. Incomplete Analysis Coverage leaves the weighting unchanged and marks the Repository Profile interpretation `coverage_limited` instead of `qualified`.

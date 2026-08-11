@@ -1,4 +1,4 @@
-# Shot 5 — Reachable Style Semantics Candidate
+# Shot 5: Reachable Style Semantics Candidate
 
 Status: implemented locally; release and validation gates remain explicit.
 

@@ -37,7 +37,7 @@ Reference and progress evidence must identify the frozen four-logical-processor 
 - Hosted artifacts must be attached to an immutable candidate revision and copied into a reviewed durable evidence record before a matrix status changes.
 - A precomputed `passes...` boolean is never sufficient; qualification validators recompute decisions from raw fields.
 - Missing targets, partial runs, local runner identities, malformed data, mixed revisions, changed report bytes, timeouts where disallowed, and failed commands fail closed.
-- The final `--require-complete` audit is necessary but not sufficient: it checks ledger completeness, while reviewers still verify that each evidence record supports its cited requirement.
+- The final `--require-complete` audit checks ledger completeness. Reviewers must still verify that each evidence record supports its cited requirement.
 
 ## Human calibration boundary
 

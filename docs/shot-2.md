@@ -1,4 +1,4 @@
-# Shot 2 — Technical Hardening Candidate
+# Shot 2: Technical Hardening Candidate
 
 Status: implemented locally; external validation and release qualification remain pending.
 

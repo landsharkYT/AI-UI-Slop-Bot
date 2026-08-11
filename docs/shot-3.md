@@ -1,4 +1,4 @@
-# Shot 3 — Implementation Closure Candidate
+# Shot 3: Implementation Closure Candidate
 
 Status: implemented locally; remaining code gates and external validation are explicit.
 

@@ -18,7 +18,7 @@ Use the bundled runner to produce durable scan artifacts, then apply human-reada
 7. Classify each candidate as one of: fix, intentional House Style, narrow suppression, or unresolved/advisory. Ask for Design Authority input when the choice would encode product taste or broaden policy.
 8. For justified fixes, preserve behavior, accessibility, responsive behavior, focus order, content, and user workflows. Prefer role-specific hierarchy and product-specific structure over cosmetic novelty. Add or update tests when the repository has an applicable test surface.
 9. Run the repository's own formatter, linter, type checker, tests, and build. Re-run the bundled scan command.
-10. Compare exact findings and coverage before and after. Do not claim success merely because the aggregate score fell; explain which evidence was removed, retained, approved, suppressed, or made unresolved.
+10. Compare exact findings and coverage before and after. Success requires an account of which evidence was removed, retained, approved, suppressed, or made unresolved; an aggregate score drop alone is insufficient.
 
 ## Guardrails
 

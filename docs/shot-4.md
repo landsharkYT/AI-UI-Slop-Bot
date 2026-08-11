@@ -1,4 +1,4 @@
-# Shot 4 — Static Style Adapter Candidate
+# Shot 4: Static Style Adapter Candidate
 
 Status: implemented locally; release and validation gates remain explicit.
 

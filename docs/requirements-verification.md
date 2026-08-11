@@ -3,7 +3,7 @@
 Source: `requirements.md` SHA-256 `ca8a2c114f9791e6c052462b3c8a2223e23ca33a18ef5581a0bcd1976b619d16`
 Generated rows: 395
 
-Every evidence record is pending until the named verification runs and the durable record links its raw fixtures, logs, labels, benchmark output, or release artifacts. Shared evidence may cover several requirements only when it cites every covered ID.
+Every evidence record starts as pending. Verification changes that status only after the durable record links its raw fixtures, logs, labels, benchmark output, or release artifacts. Shared evidence may cover several requirements only when it cites every covered ID.
 
 | Requirement | First required milestone | Planned verification | Required evidence record | Requirement summary | Status |
 |---|---|---|---|---|---|
@@ -115,7 +115,7 @@ Every evidence record is pending until the named verification runs and the durab
 | `LICENSE-002` | Validated MVP | License and provenance audit | `docs/evidence/LICENSE-002.md linking release artifact manifest keyed by LICENSE-002` | Third-party and derived Calibration Case fixtures shall retain compatible original licenses, provenance, attribution, and revision metada... | pending |
 | `LICENSE-003` | Validated MVP | License and provenance audit | `docs/evidence/LICENSE-003.md linking release artifact manifest keyed by LICENSE-003` | The project shall not redistribute proprietary *Refactoring UI* text, illustrations, or other protected content. Rule documentation may c... | pending |
 | `MILESTONE-001` | All milestones | Milestone scope review | `docs/evidence/MILESTONE-001.md` | The project shall distinguish evidence-gathering work from releasable product scope. A requirement applies only at the milestone named be... | pending |
-| `MILESTONE-002` | Discovery Prototype | Milestone scope review | `docs/evidence/MILESTONE-002.md` | Discovery Prototype (not a release): Prove the highest-risk technical and product hypotheses with the Repeated Decorative Shell rule on r... | pending |
+| `MILESTONE-002` | Discovery Prototype | Milestone scope review | `docs/evidence/MILESTONE-002.md` | Discovery Prototype, an unreleased experiment: Prove the highest-risk technical and product hypotheses with the Repeated Decorative Shel... | pending |
 | `MILESTONE-003` | Validated MVP | Milestone scope review | `docs/evidence/MILESTONE-003.md` | Validated MVP (first usable release): Deliver a whole-repository local advisory scanner with Repeated Decorative Shell and Effect Stackin... | pending |
 | `MILESTONE-004` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-004.md` | Full V1: Deliver the complete eleven-rule pack, all built-in Page Archetypes plus safe generic fallback and taxonomy extension, all specifi... | pending |
 | `MILESTONE-005` | Full V1 | Milestone scope review | `docs/evidence/MILESTONE-005.md` | The V1 feature boundary is bounded, non-executing static analysis; unsupported forms remain visible as unresolved coverage. | pending |

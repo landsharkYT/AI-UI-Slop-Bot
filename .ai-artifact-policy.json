@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "exempt": {
+    "rules": [
+      {
+        "ruleId": "grill.adrs",
+        "reason": "Decision records are intentionally published project documentation.",
+        "authority": "repository-owner:landsharkYT"
+      }
+    ],
+    "paths": [
+      {
+        "path": "skills/audit-and-fix-ui-slop/SKILL.md",
+        "reason": "This is the published agent integration for AI UI Slop Bot.",
+        "authority": "repository-owner:landsharkYT"
+      }
+    ]
+  }
+}

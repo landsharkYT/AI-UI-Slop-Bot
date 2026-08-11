@@ -1,4 +1,4 @@
-# Shot 7 — V1 Implementation Closeout
+# Shot 7: V1 Implementation Closeout
 
 Status: superseded by the `0.13.0` blocker closeout; external release validation remains open.
 
