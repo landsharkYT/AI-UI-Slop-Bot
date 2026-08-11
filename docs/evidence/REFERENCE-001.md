@@ -16,7 +16,7 @@ The [Refactoring UI traceability matrix](../references/refactoring-ui-traceabili
 - classifies reference material into deterministic evidence, explanation/remediation only, and human judgment only;
 - maps every executable rule to independently expressed rationale and a protected counterexample;
 - states that no book tactic activates a Finding by itself; and
-- identifies `gemini.pdf` as product-discovery input rather than source provenance.
+- identifies the private initial design brief as product-discovery input rather than repository content or source provenance.
 
 The executable seam `tests/shot_d_refactoring_ui_traceability.rs` verifies that every catalog rule appears in the matrix and that all three evidence classes and official sources remain explicit. Its permanent acceptable-negative fixture proves that one divider, one elevated focal surface, context-dependent typography, explicit labels, and one rounded control produce no Findings.
 

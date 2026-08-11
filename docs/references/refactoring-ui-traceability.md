@@ -19,11 +19,11 @@ The official material establishes two especially important boundaries for this s
 
 > No book tactic activates a Finding by itself.
 
-The proprietary book, illustrations, component gallery, palettes, and videos are not committed, reproduced, converted into fixtures, or treated as though they were reviewed when only public material was available. `gemini.pdf` is product-discovery input, not provenance for claims about the book.
+The proprietary book, illustrations, component gallery, palettes, and videos are not committed, reproduced, converted into fixtures, or treated as though they were reviewed when only public material was available. The private initial design brief is product-discovery input, not repository content or provenance for claims about the book.
 
 ## Gemini proposal disposition
 
-| Proposal in `gemini.pdf` | Disposition | Implemented interpretation |
+| Proposal in the private initial design brief | Disposition | Implemented interpretation |
 | --- | --- | --- |
 | Use weighted combinations instead of binary gradient detection. | Accepted | Findings use distinct semantic signals, nonlinear interactions, recurrence, and caps. |
 | Produce source-located structured output for a refactoring agent. | Accepted | Canonical Findings and Refactoring Briefs carry owner, location, evidence, explanation, remediation, and preservation context. |
